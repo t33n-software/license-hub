@@ -131,7 +131,21 @@ external rule files or unpublished documentation.
 
 ## Release handoff
 
-The local CLI prepares release promotion only. Template family releases
-(`<family>/v<semver>`) and CLI releases (`v<semver>`) are published by the
-release workflows as immutable releases with checksums, SBOMs, signatures,
-and attestations. Do not create release tags from a developer workstation.
+The local CLI prepares release promotion only. After a protected
+`release/<semver> -> main` merge, the `Tag Promoted Release` workflow creates
+the annotated immutable `v<semver>` tag at the merge commit and dispatches the
+artifact workflow (`release.yml` for CLI releases, `release-template.yml` for
+template family releases). Do not create release tags from a developer
+workstation.
+
+The governed control lanes (`Governed Release Control`, `Execute
+Protected-Line Request`, `Recover Protected-Line Request`,
+`Tag Promoted Release`) consume the pinned, checksum- and
+signature-verified `git-governance` release binary; they never build the tool
+from source at control time. The protected environments `release-request`,
+`release-execution`, and `release-delivery` gate them.
+
+Broker-backed lanes from the reference project (credential-broker smoke and
+server-side reconciliation publishing) are deliberately excluded until a
+credential broker exists for this organization; reconciliation candidates are
+prepared locally through the CLI with the governed pull-request session.
