@@ -23,7 +23,13 @@ after the CI workflows have reported their check contexts at least once and
 Required status-check contexts referenced by the shared-line rulesets:
 
 - `Quality gates (linux-amd64)` (`.github/workflows/ci.yml`)
+- `Quality gates (macos-arm64)` (`.github/workflows/ci.yml`)
+- `Quality gates (windows-amd64)` (`.github/workflows/ci.yml`)
 - `Dependency admission review` (`.github/workflows/dependency-review.yml`)
+
+After a ruleset definition changes, the imported GitHub ruleset must be
+updated by the repository administrator (UI edit or re-import) so the
+activation state matches the versioned definition.
 
 The `code_scanning` rule binds the CodeQL tool (`.github/workflows/codeql.yml`).
 
