@@ -54,6 +54,10 @@ Verification fails when the committed instance drifts from the canonical
 render, when the template digest no longer matches the pin, or when a
 placeholder remains unresolved.
 
+Running this step in tenant CI/CD is not optional: it is a merge-blocking
+required check whose binding convention lives in
+[docs/tenant-verify-convention.md](tenant-verify-convention.md).
+
 ## 4. Updates
 
 Template updates arrive as pull requests that bump `license.lock.json` and
