@@ -1,0 +1,9 @@
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+tools/go.mod text eol=lf
+tools/go.sum text eol=lf
+*.hbs text eol=lf
+LICENSE text eol=lf
+LICENSES/** text eol=lf
+*.json text eol=lf

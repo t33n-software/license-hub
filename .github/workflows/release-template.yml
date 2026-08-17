@@ -1,0 +1,105 @@
+name: Publish Template Release
+run-name: Template release ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+on:
+  push:
+    tags:
+      - "norepublish/v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing immutable <family>/v<semver> template tag to release"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: template-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  template-release:
+    if: github.repository == 't33n-software/license-hub'
+    runs-on: ubuntu-24.04
+    environment: release-delivery
+    steps:
+      - name: Check out immutable release source
+        uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate template release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          if ! [[ "${tag}" =~ ^[a-z0-9-]+/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Tag ${tag} is not a valid <family>/v<semver> template release tag."
+            exit 1
+          fi
+          tag_commit="$(git rev-parse "refs/tags/${tag}^{commit}")"
+          test "${tag_commit}" = "$(git rev-parse HEAD)"
+
+      - name: Package template family with checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          family="${tag%%/*}"
+          mapfile -t templates < <(find templates -type f -name "*.hbs" -path "*/${family}/*" | sort)
+          test "${#templates[@]}" -gt 0
+          out=".build/template-release"
+          mkdir -p "${out}"
+          cp "${templates[@]}" "${out}/"
+          changelog="$(find templates -type f -name "CHANGELOG.md" -path "*/${family}/*" -print -quit)"
+          test -n "${changelog}"
+          cp "${changelog}" "${out}/CHANGELOG.md"
+          ( cd "${out}" && sha256sum -- *.hbs > SHA256SUMS )
+          cat "${out}/SHA256SUMS"
+
+      - name: Create draft release with complete evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          family="${tag%%/*}"
+          gh release create "${tag}" \
+            --draft \
+            --verify-tag \
+            --title "${family} ${tag#*/}" \
+            --notes "Immutable template release ${tag}. Verify template digests against SHA256SUMS before pinning them in tenant license.lock.json files." \
+            .build/template-release/*.hbs \
+            .build/template-release/CHANGELOG.md \
+            .build/template-release/SHA256SUMS
+
+      - name: Verify draft artifact set
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          gh release view "${tag}" --json assets --jq '.assets[].name'
+          ( cd .build/template-release && sha256sum --check SHA256SUMS )
+
+      - name: Attest template artifacts
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: ".build/template-release/**"
+
+      - name: Publish release exactly once
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          gh release edit "${tag}" --draft=false

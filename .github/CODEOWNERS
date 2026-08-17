@@ -1,0 +1,21 @@
+# Repository ownership contract for the governed shared lines.
+#
+# The default entry maps every path to the maintainer of this
+# single-maintainer organization. GitHub CODEOWNERS entries may reference
+# users, organization teams (@org/team), or email addresses; a bare
+# organization cannot own code. The organization t33n-software is the
+# organizational owner of this repository; the binding maintainer entry
+# below is its canonical representative. A team reference
+# (@t33n-software/<team>) is added by a governed change once the
+# organization establishes its first team.
+
+* @CyberT33N
+
+# Legal-governance boundary: canonical license templates, the organization
+# defaults, the tenant registry, and the licensing policy are legal-owned
+# content and require the same single-maintainer review until a dedicated
+# legal team exists.
+/templates/ @CyberT33N
+/org-defaults.json @CyberT33N
+/registry.json @CyberT33N
+/POLICY.md @CyberT33N
