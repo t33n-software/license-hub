@@ -1,0 +1,121 @@
+name: Governed Release Control
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Authorize a protected release or support-line request.
+        required: true
+        type: choice
+        options:
+          - release-request
+      version:
+        description: Release SemVer or support major.minor version without a leading v.
+        required: true
+        type: string
+      kind:
+        description: Protected line kind.
+        required: true
+        type: choice
+        options:
+          - release
+          - support
+      ticket_key:
+        description: Ticket key for the release request.
+        required: true
+        type: string
+      ticket:
+        description: Ticket number for the release request.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-control-${{ inputs.version || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-request:
+    if: ${{ inputs.operation == 'release-request' }}
+    name: Authorize protected-line request
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release-request
+    permissions:
+      actions: write
+      contents: read
+      deployments: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Cosign for CLI checksum verification
+        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+        with:
+          cosign-release: v3.0.6
+
+      - name: Fetch and verify the pinned git-governance CLI
+        shell: bash
+        env:
+          GG_VERSION: "1.1.0"
+        run: |
+          set -euo pipefail
+          base="https://github.com/t33n-software/git-governance/releases/download/v${GG_VERSION}"
+          curl -fSLO --retry 3 --retry-all-errors "${base}/git-governance_${GG_VERSION}_linux_amd64.tar.gz"
+          curl -fSLO --retry 3 --retry-all-errors "${base}/git-governance_${GG_VERSION}_checksums.txt"
+          curl -fSLO --retry 3 --retry-all-errors "${base}/git-governance_${GG_VERSION}_checksums.txt.sigstore.json"
+          cosign verify-blob \
+            --bundle "git-governance_${GG_VERSION}_checksums.txt.sigstore.json" \
+            --certificate-oidc-issuer "https://github.com/login/oauth" \
+            --certificate-identity-regexp "https://github.com/t33n-software/git-governance/.github/workflows/publish-release-artifacts.yml@refs/tags/v.*" \
+            "git-governance_${GG_VERSION}_checksums.txt"
+          grep "linux_amd64.tar.gz$" "git-governance_${GG_VERSION}_checksums.txt" | sha256sum --check
+          mkdir -p .build/bin
+          tar -xzf "git-governance_${GG_VERSION}_linux_amd64.tar.gz" git-governance
+          mv git-governance .build/bin/git-governance
+          .build/bin/git-governance --version
+
+      - name: Require approved release-request inputs
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          KIND: ${{ inputs.kind }}
+          TICKET_KEY: ${{ inputs.ticket_key }}
+          TICKET: ${{ inputs.ticket }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          for variable in VERSION KIND TICKET_KEY TICKET; do
+            test -n "${!variable:-}" || { echo "release-request requires $variable" >&2; exit 1; }
+          done
+
+      - name: Authorize and dispatch bound protected-line execution
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GIT_GOVERNANCE_WORKFLOW_TOKEN: server
+          KIND: ${{ inputs.kind }}
+          VERSION: ${{ inputs.version }}
+          TICKET_KEY: ${{ inputs.ticket_key }}
+          TICKET: ${{ inputs.ticket }}
+          REQUESTER: ${{ github.actor }}
+          PARENT_RUN: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          .build/bin/git-governance \
+            --interactive never \
+            --output json \
+            --yes \
+            --pull-request-provider github \
+            workflow release request \
+            --kind "$KIND" \
+            --version "$VERSION" \
+            --key "$TICKET_KEY" \
+            --ticket "$TICKET" \
+            --requester "$REQUESTER" \
+            --parent-run "$PARENT_RUN"
