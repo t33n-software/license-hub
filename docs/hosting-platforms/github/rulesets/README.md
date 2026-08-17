@@ -26,3 +26,19 @@ Required status-check contexts referenced by the shared-line rulesets:
 - `Dependency admission review` (`.github/workflows/dependency-review.yml`)
 
 The `code_scanning` rule binds the CodeQL tool (`.github/workflows/codeql.yml`).
+
+## `do_not_enforce_on_create` contract
+
+The flag is assigned per branch class and is never left implicit:
+
+| Ruleset | Branch class | `do_not_enforce_on_create` |
+|---------|--------------|----------------------------|
+| `02-develop.json` | `develop` | `false` |
+| `03-main.json` | `main` | `false` |
+| `04-release.json` | `release/*` | `true` |
+| `05-support.json` | `support/*` | `true` |
+
+Only release and support lines carry `true`, so a frozen line can be created
+before any check has reported on it; every pull request into it is then gated
+normally. `01-ticket-working-branches.json` carries no `required_status_checks`
+rule, so the flag is not applicable there.
