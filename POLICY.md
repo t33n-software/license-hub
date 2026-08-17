@@ -31,6 +31,9 @@ Every template release requires legal-counsel review before publication.
 3. The tenant CI runs `license verify` as a merge-blocking drift guard.
 4. Template updates propagate as tenant-controlled pull requests; no tenant
    updates automatically.
+5. The tenant CI/CD build process MUST run the verify step as a
+   merge-blocking required check; the binding contract is
+   `docs/tenant-verify-convention.md`.
 
 ## 4. Placeholder contract
 
