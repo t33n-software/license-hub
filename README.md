@@ -20,6 +20,7 @@ project or substantially similar forks is prohibited. See `LICENSE`.
 | `cmd/license` | `render`, `verify`, `digest`, `version` CLI |
 | `cmd/build` | Ordered local quality gate runner |
 | `cmd/check-coverage` | 100.0% statement-coverage gate |
+| `docs/hosting-platforms/github/rulesets/` | Versioned GitHub ruleset definitions and activation state |
 
 ## Tenant adoption in four steps
 
