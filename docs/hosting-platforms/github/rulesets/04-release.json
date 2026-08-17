@@ -41,6 +41,12 @@
             "context": "Quality gates (linux-amd64)"
           },
           {
+            "context": "Quality gates (macos-arm64)"
+          },
+          {
+            "context": "Quality gates (windows-amd64)"
+          },
+          {
             "context": "Dependency admission review"
           }
         ]
@@ -56,6 +62,19 @@
             "security_alerts_threshold": "all"
           }
         ]
+      }
+    },
+    {
+      "type": "code_quality",
+      "parameters": {
+        "severity": "all"
+      }
+    },
+    {
+      "type": "code_coverage",
+      "parameters": {
+        "minimum_coverage": 100,
+        "max_coverage_drop": 0
       }
     }
   ]
