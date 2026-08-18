@@ -26,9 +26,10 @@ the organization defaults and proves three properties fail-closed:
 
 - The verify step runs as a required status check with the stable check
   context **`License instance verification`**.
-- Tenant repositories list this context in their `02-develop` and `03-main`
-  rulesets, so no pull request into a shared line can merge while the
-  instance is unverified.
+- Tenant repositories carry this context through the organization-level
+  `02-develop` and `03-main` shared-line rulesets of their quality-gates
+  class, so no pull request into a shared line can merge while the instance
+  is unverified.
 - The step consumes the `license` CLI exclusively as a digest-pinned,
   signature- and attestation-verified release binary of this hub.
   Source-based execution in tenant CI — a hub checkout or `go run` — is not
