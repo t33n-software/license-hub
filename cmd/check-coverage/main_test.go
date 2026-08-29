@@ -27,6 +27,21 @@ func TestRunUsageError(t *testing.T) {
 	}
 }
 
+func TestRunVersion(t *testing.T) {
+	called := false
+	runner := func(context.Context, string, ...string) ([]byte, error) {
+		called = true
+		return nil, nil
+	}
+	code, stdout, _ := runWith([]string{"--version"}, runner)
+	if code != 0 || !strings.Contains(stdout, "check-coverage devel") {
+		t.Fatalf("run(--version) = %d, %q", code, stdout)
+	}
+	if called {
+		t.Fatal("run(--version) must not execute the coverage command")
+	}
+}
+
 func TestRunNilContext(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run(testNilContext(), nil, &stdout, &stderr, fakeRunner("ok\n", nil))
