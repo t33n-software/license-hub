@@ -1,5 +1,7 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 4,
+  "toolchain": { "language": "go", "version": "1.26.6" },
+  "extends": [],
   "defaults": {
     "includeFamilies": [
       "feature",
@@ -23,5 +25,30 @@
       ],
       "timeout": "15m"
     }
-  ]
+  ],
+  "project": {
+    "binaries": [
+      {
+        "package": "./cmd/license",
+        "smoke": ["version"]
+      }
+    ],
+    "fuzz": [
+      {
+        "package": "./internal/domain/placeholder",
+        "target": "FuzzUnresolved",
+        "time": "50000x"
+      },
+      {
+        "package": "./internal/domain/values",
+        "target": "FuzzParse",
+        "time": "50000x"
+      },
+      {
+        "package": "./internal/domain/lockfile",
+        "target": "FuzzParse",
+        "time": "50000x"
+      }
+    ]
+  }
 }

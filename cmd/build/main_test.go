@@ -50,6 +50,18 @@ func TestRunUsageError(t *testing.T) {
 	}
 }
 
+func TestRunVersion(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	execute, recorded := fakeExecute("")
+	code := run(context.Background(), []string{"--version"}, &stdout, &stderr, execute, fakeFinder(nil, nil), okDir)
+	if code != 0 || !strings.Contains(stdout.String(), "build devel") {
+		t.Fatalf("run(--version) = %d, %q", code, stdout.String())
+	}
+	if len(*recorded) != 0 {
+		t.Fatalf("run(--version) executed %d external steps, want 0", len(*recorded))
+	}
+}
+
 func TestRunNilContext(t *testing.T) {
 	execute, _ := fakeExecute("")
 	code, _, _ := runBuildWithNilContext(execute)
