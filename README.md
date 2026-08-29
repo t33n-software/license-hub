@@ -18,8 +18,6 @@ project or substantially similar forks is prohibited. See `LICENSE`.
 | `registry.json` | Audit index of known tenant instances |
 | `POLICY.md` | Family assignment, legal SemVer, adoption, placeholder contract |
 | `cmd/license` | `render`, `verify`, `digest`, `version` CLI |
-| `cmd/build` | Ordered local quality gate runner |
-| `cmd/check-coverage` | 100.0% statement-coverage gate |
 | `docs/conventions/hosting-plattform/github/rule-sets/` | Organization-wide GitHub ruleset binding of this repository (canonical definitions live in `git-governance`) |
 
 ## Tenant adoption in four steps
@@ -45,5 +43,5 @@ The full contract is documented in `docs/adoption-guide.md` and `POLICY.md`.
 See `CONTRIBUTING.md`. The full local gate is:
 
 ```bash
-go run -mod=readonly ./cmd/build
+go tool -modfile tools/go.mod quality-gate
 ```
