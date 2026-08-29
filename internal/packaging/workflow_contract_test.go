@@ -171,11 +171,25 @@ func TestModuleIdentityAndQualityContract(t *testing.T) {
 		`"version": "1.26.6"`,
 		`"extends": []`,
 		"full-local-build",
-		"./cmd/build",
+		"\"args\": [\n        \"tool\",\n        \"-modfile\",\n        \"tools/go.mod\",\n        \"quality-gate\"\n      ],",
 		"./cmd/license",
 	} {
 		if !strings.Contains(quality, required) {
 			t.Fatalf("git-governance.quality.json does not contain %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"./cmd/build",
+		"./cmd/check-coverage",
+		`"defaults"`,
+	} {
+		if strings.Contains(quality, forbidden) {
+			t.Fatalf("git-governance.quality.json must not contain %q: the canonical gate chain lives in the pinned orchestrator and the schema owns the family default", forbidden)
+		}
+	}
+	for _, copy := range []string{"cmd/build", "cmd/check-coverage"} {
+		if _, err := os.Stat(repositoryPath(copy)); !os.IsNotExist(err) {
+			t.Fatalf("the chain copy %s must be absent: the canonical gate chain is referenced via the tool pin, never re-implemented per repository", copy)
 		}
 	}
 
