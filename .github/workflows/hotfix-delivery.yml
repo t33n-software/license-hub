@@ -1,4 +1,4 @@
-name: Tag Promoted Release
+name: Deliver Approved Main Hotfix
 
 on:
   pull_request:
@@ -8,19 +8,19 @@ on:
       - closed
   workflow_dispatch:
     inputs:
-      release_branch:
-        description: Merged release/<semver> source branch of the controlled promotion.
+      hotfix_branch:
+        description: Merged hotfix/<ticket>-<slug> branch to redeliver.
         required: true
         type: string
-      merge_sha:
-        description: The pull-request merge commit of the controlled promotion into the main line.
-        required: true
+      record:
+        description: Optional repository-relative hotfix release record path.
+        required: false
         type: string
 
 permissions: {}
 
 concurrency:
-  group: release-tag-${{ github.event.pull_request.number || inputs.release_branch }}
+  group: hotfix-delivery-${{ github.event.pull_request.number || inputs.hotfix_branch }}
   cancel-in-progress: false
 
 jobs:
@@ -30,46 +30,47 @@ jobs:
   # deployment branch policy. Convention:
   # docs/conventions/hosting-platforms/github/workflows/environment-gate-trigger-context.md
   detect:
-    name: Detect merged release promotion
+    name: Detect merged hotfix promotion
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.merged == true &&
       github.event.pull_request.base.ref == 'main' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      startsWith(github.event.pull_request.head.ref, 'release/') &&
-      github.event.pull_request.merge_commit_sha != ''
+      startsWith(github.event.pull_request.head.ref, 'hotfix/')
     permissions:
       actions: write
     runs-on: ubuntu-24.04
     steps:
-      - name: Dispatch the main-bound tag execution
+      - name: Dispatch the main-bound hotfix delivery
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          RELEASE_BRANCH: ${{ github.event.pull_request.head.ref }}
-          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          HOTFIX_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
           curl --fail-with-body --request POST \
-            --url "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/workflows/tag-promoted-release.yml/dispatches" \
+            --url "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/actions/workflows/hotfix-delivery.yml/dispatches" \
             --header "Accept: application/vnd.github+json" \
             --header "Authorization: Bearer ${GITHUB_TOKEN}" \
             --header "X-GitHub-Api-Version: 2026-03-10" \
             --header "Content-Type: application/json" \
-            --data "{\"ref\":\"main\",\"inputs\":{\"release_branch\":\"${RELEASE_BRANCH}\",\"merge_sha\":\"${MERGE_SHA}\"}}"
+            --data "{\"ref\":\"main\",\"inputs\":{\"hotfix_branch\":\"${HOTFIX_BRANCH}\"}}"
 
   # Execution runs only on the main-bound workflow_dispatch run, so the
-  # release-delivery environment admission (branch policy plus required
-  # reviewers) gates the immutable tag creation. Convention:
+  # hotfix-delivery environment admission (branch policy plus required
+  # reviewers) gates the patch delivery. Convention:
   # docs/conventions/hosting-platforms/github/workflows/environment-gate-trigger-context.md
-  tag:
-    name: Release tag
+  deliver:
+    name: Hotfix delivery
     if: github.event_name == 'workflow_dispatch'
     permissions:
       actions: write
       contents: write
-    uses: t33n-software/git-governance/.github/workflows/reusable-tag-promoted-release.yml@77da3857d8db3f3567522651750980e087c0a6eb
+      id-token: write
+    uses: t33n-software/git-governance/.github/workflows/reusable-hotfix-delivery.yml@77da3857d8db3f3567522651750980e087c0a6eb
     with:
-      release_branch: ${{ inputs.release_branch }}
-      merge_sha: ${{ inputs.merge_sha }}
-      delivery_environment: release-delivery
+      hotfix_branch: ${{ inputs.hotfix_branch }}
+      record: ${{ inputs.record }}
+      delivery_variant: ${{ vars.GIT_GOVERNANCE_DELIVERY_VARIANT }}
+      delivery_environment: hotfix-delivery
+      governance_repository: t33n-software/git-governance
