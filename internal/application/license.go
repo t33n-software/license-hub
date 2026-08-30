@@ -58,7 +58,7 @@ func (s *LicenseService) Render(req RenderRequest) (RenderResult, error) {
 	if unresolved := placeholder.Unresolved(content); len(unresolved) > 0 {
 		return RenderResult{}, fmt.Errorf("unresolved placeholders: %s", strings.Join(unresolved, ", "))
 	}
-	targets := instancePaths(req.OutDir, merged["LICENSE_ID"])
+	targets := instancePaths(req.OutDir, merged)
 	for _, target := range targets {
 		if err := s.fs.WriteFile(target, []byte(content)); err != nil {
 			return RenderResult{}, fmt.Errorf("write %s: %w", target, err)
@@ -100,7 +100,7 @@ func (s *LicenseService) Verify(req VerifyRequest) ([]string, error) {
 	if unresolved := placeholder.Unresolved(content); len(unresolved) > 0 {
 		violations = append(violations, "unresolved placeholders: "+strings.Join(unresolved, ", "))
 	}
-	for _, target := range instancePaths(req.Dir, merged["LICENSE_ID"]) {
+	for _, target := range instancePaths(req.Dir, merged) {
 		committed, err := s.fs.ReadFile(target)
 		if err != nil {
 			violations = append(violations, "missing rendered file: "+target)
@@ -165,9 +165,17 @@ func (s *LicenseService) readValues(path string) (map[string]string, error) {
 	return parsed, nil
 }
 
-func instancePaths(dir, licenseID string) []string {
+// instancePaths resolves the canonical instance locations. The REUSE license
+// text file carries the tenant-declared SPDX identifier when the values
+// declare one; custom licenses without a listed identifier keep the
+// LicenseRef-<LICENSE_ID> form.
+func instancePaths(dir string, merged map[string]string) []string {
+	stem := "LicenseRef-" + merged["LICENSE_ID"]
+	if identifier := strings.TrimSpace(merged["SPDX_LICENSE_IDENTIFIER"]); identifier != "" {
+		stem = identifier
+	}
 	return []string{
 		filepath.Join(dir, "LICENSE"),
-		filepath.Join(dir, "LICENSES", "LicenseRef-"+licenseID+".txt"),
+		filepath.Join(dir, "LICENSES", stem+".txt"),
 	}
 }

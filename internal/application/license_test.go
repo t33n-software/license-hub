@@ -3,6 +3,7 @@ package application
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -335,5 +336,72 @@ func TestTemplateDigestReadError(t *testing.T) {
 	service := NewLicenseService(newFakeFS())
 	if _, err := service.TemplateDigest("missing.hbs"); err == nil {
 		t.Fatal("TemplateDigest() expected error")
+	}
+}
+
+func TestInstancePathsLegacyStemWithoutSpdxIdentifier(t *testing.T) {
+	got := instancePaths("out", map[string]string{"LICENSE_ID": "example-NoRepublish-1.0"})
+	want := []string{
+		filepath.Join("out", "LICENSE"),
+		filepath.Join("out", "LICENSES", "LicenseRef-example-NoRepublish-1.0.txt"),
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("instancePaths() = %v, want %v", got, want)
+	}
+}
+
+func TestInstancePathsSpdxIdentifierWins(t *testing.T) {
+	got := instancePaths("out", map[string]string{
+		"LICENSE_ID":              "example-MIT",
+		"SPDX_LICENSE_IDENTIFIER": "MIT",
+	})
+	want := []string{
+		filepath.Join("out", "LICENSE"),
+		filepath.Join("out", "LICENSES", "MIT.txt"),
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("instancePaths() = %v, want %v", got, want)
+	}
+}
+
+func TestInstancePathsBlankSpdxIdentifierFallsBack(t *testing.T) {
+	got := instancePaths("out", map[string]string{
+		"LICENSE_ID":              "example-MIT",
+		"SPDX_LICENSE_IDENTIFIER": "   ",
+	})
+	want := filepath.Join("out", "LICENSES", "LicenseRef-example-MIT.txt")
+	if got[1] != want {
+		t.Fatalf("instancePaths() = %v, want second path %v", got, want)
+	}
+}
+
+func TestRenderAndVerifyWithSpdxIdentifier(t *testing.T) {
+	f := seededFS(t)
+	f.files["values.json"] = valuesJSON(t, map[string]string{
+		"PROJECT_NAME":            "example-project",
+		"LICENSE_ID":              "example-project-MIT",
+		"COPYRIGHT_YEAR":          "2026",
+		"CANONICAL_SOURCE_URL":    "https://github.com/t33n-software/example-project",
+		"SPDX_LICENSE_IDENTIFIER": "MIT",
+	})
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	spdxPath := filepath.Join("out", "LICENSES", "MIT.txt")
+	if len(result.Written) != 2 || result.Written[1] != spdxPath {
+		t.Fatalf("Render() wrote %v, want second path %s", result.Written, spdxPath)
+	}
+	legacyPath := filepath.Join("out", "LICENSES", "LicenseRef-example-project-MIT.txt")
+	if _, ok := f.files[legacyPath]; ok {
+		t.Fatalf("Render() wrote %s despite SPDX_LICENSE_IDENTIFIER", legacyPath)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
 	}
 }

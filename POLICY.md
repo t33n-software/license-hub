@@ -44,9 +44,19 @@ The closed anchor set is:
 |--------|-----------------|
 | `PROJECT_NAME`, `LICENSE_ID`, `COPYRIGHT_YEAR`, `CANONICAL_SOURCE_URL` | Tenant `license.values.json` |
 | `COPYRIGHT_HOLDER`, `GOVERNING_LAW`, `VENUE`, `PERMISSION_CONTACT` | Hub `org-defaults.json` |
+| `SPDX_LICENSE_IDENTIFIER` (optional) | Tenant `license.values.json` |
 
 A rendered instance with an unresolved anchor is invalid; the render gate
 rejects it (`grep -RE '\{\{[A-Z0-9_]+\}\}'` must return zero matches).
+
+The optional `SPDX_LICENSE_IDENTIFIER` anchor selects the REUSE output stem:
+when set to the exact SPDX identifier of a listed standard license (for
+example `MIT` or `Apache-2.0`), the instance renders as
+`LICENSES/<SPDX_LICENSE_IDENTIFIER>.txt`; when unset, custom and unlisted
+instruments keep the `LICENSES/LicenseRef-<LICENSE_ID>.txt` form. For license
+texts shared by an `-only`/`-or-later` identifier pair (the GPL, LGPL, AGPL,
+and GFDL families), the template carries the shared text and the tenant
+declares the suffix through this key.
 
 ## 5. Ownership
 
