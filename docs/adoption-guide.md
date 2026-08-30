@@ -15,6 +15,25 @@ Create `license.values.json` with the project facts:
 }
 ```
 
+For a listed standard license, additionally set `SPDX_LICENSE_IDENTIFIER` to
+its exact SPDX identifier so the REUSE text file renders as
+`LICENSES/<ID>.txt`:
+
+```json
+{
+  "PROJECT_NAME": "example-project",
+  "LICENSE_ID": "example-project-MIT",
+  "COPYRIGHT_YEAR": "2026",
+  "CANONICAL_SOURCE_URL": "https://github.com/<org>/example-project",
+  "SPDX_LICENSE_IDENTIFIER": "MIT"
+}
+```
+
+Leave the key unset for custom and unlisted instruments, which keep the
+`LICENSES/LicenseRef-<LICENSE_ID>.txt` form. For license texts shared by an
+`-only`/`-or-later` pair (GPL, LGPL, AGPL, GFDL), declare the chosen suffix
+through this key (for example `GPL-3.0-only`); the template text is shared.
+
 Create `license.lock.json` pinning the template release. The digest is the
 SHA-256 of the template file as published in the immutable template release:
 
@@ -36,8 +55,17 @@ license render \
   --out .
 ```
 
-This writes `LICENSE` and `LICENSES/LicenseRef-<LICENSE_ID>.txt`. Commit both
-files plus the values and lock files.
+This writes `LICENSE` and the REUSE text file (`LICENSES/<ID>.txt` for listed
+standard licenses, `LICENSES/LicenseRef-<LICENSE_ID>.txt` for custom and
+unlisted instruments). Commit both files plus the values and lock files.
+
+The canonical per-template documentation — family, grant, conditions,
+restrictions, patent position, and adoption notes — lives in
+[licensing/](licensing/README.md); the operational contracts live in
+[infrastructure/](infrastructure/README.md). Multi-license compositions
+(recipient choice `OR`, cumulative stacking `AND`, `WITH` exceptions) are
+formed from member templates per
+[licensing/multi-licensing/README.md](licensing/multi-licensing/README.md).
 
 ## 3. Verify (drift guard)
 
