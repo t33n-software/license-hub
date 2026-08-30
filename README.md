@@ -18,6 +18,8 @@ project or substantially similar forks is prohibited. See `LICENSE`.
 | `registry.json` | Audit index of known tenant instances |
 | `POLICY.md` | Family assignment, legal SemVer, adoption, placeholder contract |
 | `cmd/license` | `render`, `verify`, `digest`, `version` CLI |
+| `docs/licensing/` | Self-contained license taxonomy canon and per-template documentation |
+| `docs/infrastructure/` | Template contract, tenant control files, render/verify, CI integration |
 | `docs/conventions/hosting-plattform/github/rule-sets/` | Organization-wide GitHub ruleset binding of this repository (canonical definitions live in `git-governance`) |
 
 ## Tenant adoption in four steps
