@@ -61,22 +61,7 @@ boundary. It carries the organization constants injected into every render:
 These constants are public by nature — they appear in every rendered license —
 and therefore never belong in a secret store.
 
-## 4. `registry.json` — tenant audit view
-
-Lives in this repository and records known tenant instances:
-
-```json
-{
-  "version": 1,
-  "tenants": []
-}
-```
-
-The registry is an audit view, never a render dependency: the hub renders
-without knowing tenants. Entries are appended when a tenant adopts the hub;
-they never influence rendering or verification.
-
-## 5. Edit-location discipline
+## 4. Edit-location discipline
 
 | File | Edit location | Gate |
 |------|---------------|------|
@@ -85,4 +70,3 @@ they never influence rendering or verification.
 | `license.values.json` | Tenant | Tenant pull request |
 | `license.lock.json` | Tenant, via adoption pull request | Verify lane digest proof |
 | Rendered instances (`LICENSE`, `LICENSES/`) | Nowhere — regenerated only | Drift guard rejects hand edits |
-| `registry.json` | Hub, on tenant adoption | Audit only |

@@ -17,7 +17,6 @@ instances are re-rendered, never hand-edited.
 |-----------|------|--------------------|
 | `templates/` | Exactly one versioned directory per license template, released as immutable digest-pinned template releases | [template-contract.md](template-contract.md) and [../../templates/README.md](../../templates/README.md) |
 | `org-defaults.json` | Organization constants injected into every render | [tenant-files.md](tenant-files.md) |
-| `registry.json` | Audit view of known tenant instances; never a render dependency | [tenant-files.md](tenant-files.md) |
 | `license.values.json` (tenant) | Project facts of the adopting repository | [tenant-files.md](tenant-files.md) |
 | `license.lock.json` (tenant) | Template pin: path, version, SHA-256 digest | [tenant-files.md](tenant-files.md) |
 | `license` CLI | Zero-dependency render, verify, digest, and version tool | [render-and-verify.md](render-and-verify.md) |
@@ -38,8 +37,9 @@ instances are re-rendered, never hand-edited.
 3. Referencing a license by URL instead of committing the full text is
    forbidden: the notice becomes fragile, the version ambiguous, and scanners
    and platforms see no license.
-4. The tenant registry is an audit view, not a render dependency; the hub does
-   not need to know tenants for rendering.
+4. The hub is organization- and tenant-agnostic: it carries no tenant
+   inventory and no references to adopting projects; adoption audit views live
+   in the consuming organization's instance layer, never in the hub.
 5. The pull model needs no cross-repository credentials: every tenant acts
    only on itself, and template updates propagate as tenant-controlled pull
    requests.
