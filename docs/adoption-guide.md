@@ -52,8 +52,14 @@ license render \
   --template templates/custom/norepublish/NoRepublish-1.0.0.hbs \
   --org-defaults org-defaults.json \
   --values license.values.json \
-  --out .
+  --out . \
+  --yes
 ```
+
+The `--yes` flag confirms the mutation non-interactively; without it the
+command asks for confirmation on an interactive terminal and fails closed
+otherwise. `license render --dry-run ...` prints the plan without writing any
+file.
 
 This writes `LICENSE` and the REUSE text file (`LICENSES/<ID>.txt` for listed
 standard licenses, `LICENSES/LicenseRef-<LICENSE_ID>.txt` for custom and

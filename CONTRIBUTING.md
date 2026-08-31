@@ -57,6 +57,7 @@ Every behavior change requires tests at the lowest meaningful boundary:
 | Template, placeholder, or digest grammar | same-package whitebox table tests and fuzz seed |
 | Values or lockfile decoding | decoder whitebox test and fuzz seed |
 | CLI flags or command surface | command contract test |
+| CLI help or value-domain surface | help contract test against the command registry, property-based acceptance and rejection tests per value class, and the help-first consumer test (see `docs/conventions/cli/testing/README.md`) |
 
 Run the full local gate:
 
