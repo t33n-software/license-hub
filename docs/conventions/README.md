@@ -12,7 +12,7 @@ source of truth).
 | Domain | Scope | Owning documents |
 |---|---|---|
 | CLI conventions | Language-agnostic and CLI-theme-agnostic infrastructure conventions for every command-line tool: help, value domains, output and error contracts, interaction, error philosophy, configuration, security, lifecycle, testing, distribution, and identity | [cli/README.md](cli/README.md) |
-| Hosting platform | Platform-specific operational conventions bound by this repository | [hosting-platform/github/rule-sets/README.md](hosting-platform/github/rule-sets/README.md) |
+| Hosting platform | Platform-specific operational conventions bound by this repository | [hosting-platforms/github/rule-sets/README.md](hosting-platforms/github/rule-sets/README.md) |
 
 ## Naming and language rules
 

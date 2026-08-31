@@ -20,7 +20,7 @@ project or substantially similar forks is prohibited. See `LICENSE`.
 | `docs/licensing/` | Self-contained license taxonomy canon and per-template documentation |
 | `docs/infrastructure/` | Template contract, tenant control files, render/verify, CI integration |
 | `docs/conventions/cli/` | Organization-wide CLI conventions (help, value domains, output, interaction, errors, configuration, security, lifecycle, testing, distribution, identity) |
-| `docs/conventions/hosting-platform/github/rule-sets/` | Organization-wide GitHub ruleset binding of this repository (canonical definitions live in `git-governance`) |
+| `docs/conventions/hosting-platforms/github/rule-sets/` | Organization-wide GitHub ruleset binding of this repository (canonical definitions live in `git-governance`) |
 
 ## Tenant adoption in four steps
 
