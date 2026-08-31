@@ -15,7 +15,6 @@ project or substantially similar forks is prohibited. See `LICENSE`.
 |------|---------|
 | `templates/` | Canonical license template families (see `templates/README.md`) |
 | `org-defaults.json` | Organization constants injected into every render |
-| `registry.json` | Audit index of known tenant instances |
 | `POLICY.md` | Family assignment, legal SemVer, adoption, placeholder contract |
 | `cmd/license` | `render`, `verify`, `digest`, `version` CLI |
 | `docs/licensing/` | Self-contained license taxonomy canon and per-template documentation |
