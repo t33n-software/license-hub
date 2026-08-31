@@ -278,7 +278,7 @@ func TestOrganizationRulesetAdoptionHasNoLocalLegacyDefinitions(t *testing.T) {
 		t.Fatalf("legacy ruleset location must not exist")
 	}
 
-	conventions := readRepositoryFile(t, filepath.Join("docs", "conventions", "hosting-plattform", "github", "rule-sets", "README.md"))
+	conventions := readRepositoryFile(t, filepath.Join("docs", "conventions", "hosting-platform", "github", "rule-sets", "README.md"))
 	for _, required := range []string{
 		"git-governance",
 		"quality-gates=full",

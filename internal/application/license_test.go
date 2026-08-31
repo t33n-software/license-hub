@@ -1,6 +1,7 @@
 package application
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/t33n-software/license-hub/internal/domain/digest"
 )
+
+// Convention: docs/conventions/cli/testing/README.md
 
 type fakeFS struct {
 	files    map[string][]byte
@@ -336,6 +339,69 @@ func TestTemplateDigestReadError(t *testing.T) {
 	service := NewLicenseService(newFakeFS())
 	if _, err := service.TemplateDigest("missing.hbs"); err == nil {
 		t.Fatal("TemplateDigest() expected error")
+	}
+}
+
+func TestPlanRenderReportsTargetsAndDigestWithoutWriting(t *testing.T) {
+	f := seededFS(t)
+	service := NewLicenseService(f)
+	plan, err := service.PlanRender(renderRequest())
+	if err != nil {
+		t.Fatalf("PlanRender() error = %v", err)
+	}
+	if len(plan.Targets) != 2 || plan.Targets[0] != licensePath || plan.Targets[1] != canonicalPath {
+		t.Fatalf("PlanRender() targets = %v", plan.Targets)
+	}
+	if plan.Digest != digest.SHA256([]byte(testTemplate)) {
+		t.Fatalf("PlanRender() digest = %q", plan.Digest)
+	}
+	if len(f.files) != 3 {
+		t.Fatalf("PlanRender() must not write; files = %v", len(f.files))
+	}
+}
+
+func TestPlanRenderTemplateReadError(t *testing.T) {
+	service := NewLicenseService(newFakeFS())
+	if _, err := service.PlanRender(renderRequest()); err == nil {
+		t.Fatal("PlanRender() expected template read error")
+	}
+}
+
+func TestPlanRenderValuesError(t *testing.T) {
+	f := seededFS(t)
+	delete(f.files, "values.json")
+	service := NewLicenseService(f)
+	if _, err := service.PlanRender(renderRequest()); err == nil {
+		t.Fatal("PlanRender() expected values error")
+	}
+}
+
+func TestPlanRenderUnresolvedPlaceholders(t *testing.T) {
+	f := seededFS(t)
+	f.files["template.hbs"] = []byte(testTemplate + "{{UNKNOWN_ANCHOR}}\n")
+	service := NewLicenseService(f)
+	if _, err := service.PlanRender(renderRequest()); err == nil {
+		t.Fatal("PlanRender() expected unresolved placeholders error")
+	}
+}
+
+func TestMissingValuesErrorCarriesTheSentinel(t *testing.T) {
+	f := seededFS(t)
+	f.files["values.json"] = valuesJSON(t, map[string]string{"PROJECT_NAME": "x"})
+	service := NewLicenseService(f)
+	_, err := service.Render(renderRequest())
+	if !errors.Is(err, ErrMissingValues) {
+		t.Fatalf("Render() error = %v, want ErrMissingValues", err)
+	}
+}
+
+func TestUnresolvedPlaceholdersErrorCarriesTheSentinel(t *testing.T) {
+	f := seededFS(t)
+	f.files["template.hbs"] = []byte(testTemplate + "{{UNKNOWN_ANCHOR}}\n")
+	service := NewLicenseService(f)
+	_, err := service.Render(renderRequest())
+	if !errors.Is(err, ErrUnresolvedPlaceholders) {
+		t.Fatalf("Render() error = %v, want ErrUnresolvedPlaceholders", err)
 	}
 }
 
