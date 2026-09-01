@@ -90,7 +90,10 @@ placeholder remains unresolved.
 
 Running this step in tenant CI/CD is not optional: it is a merge-blocking
 required check whose binding convention lives in
-[docs/tenant-verify-convention.md](tenant-verify-convention.md).
+[docs/tenant-verify-convention.md](tenant-verify-convention.md). In CI the
+check consumes the CLI through the tenant's pinned tooling module (the fleet
+tool channel, with no hub release required) and runs inside the tenant's
+canonical conformance check, not as a separate lane.
 
 ## 4. Updates
 

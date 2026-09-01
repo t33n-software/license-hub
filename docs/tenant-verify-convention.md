@@ -6,10 +6,10 @@ a rendered license instance from this hub.
 
 ## 1. Rule
 
-Every tenant project MUST execute the license verify step in its CI/CD build
-process as a merge-blocking required check. A tenant release MUST NOT be
-produced from a state in which the committed license instance fails
-verification.
+Every tenant project MUST execute the license verify proof in its CI/CD build
+process as a merge-blocking required check carried by its canonical
+conformance check. A tenant release MUST NOT be produced from a state in
+which the committed license instance fails verification.
 
 ## 2. What verification proves
 
@@ -24,16 +24,22 @@ the organization defaults and proves three properties fail-closed:
 
 ## 3. Integration contract
 
-- The verify step runs as a required status check with the stable check
-  context **`License instance verification`**.
-- Tenant repositories carry this context through the organization-level
-  `02-develop` and `03-main` shared-line rulesets of their quality-gates
-  class, so no pull request into a shared line can merge while the instance
-  is unverified.
-- The step consumes the `license` CLI exclusively as a digest-pinned,
-  signature- and attestation-verified release binary of this hub.
-  Source-based execution in tenant CI — a hub checkout or `go run` — is not
-  permitted.
+- The verify proof runs inside the tenant's existing canonical conformance
+  check — the merge-blocking `Canonical conformance / Canonical bindings
+  verification` check context — not as a separate lane or a dedicated check
+  context. When the tenant's binding manifest binds the license-hub family,
+  the conformance verifier orchestrates the tenant-pinned `license` CLI and
+  proves the three properties of Section 2 fail-closed on every pull request.
+- Tenant repositories carry the canonical conformance check as a required
+  check through the shared-line rulesets of their quality-gates class, so no
+  pull request into a shared line can merge while the instance is unverified.
+- The check consumes the `license` CLI through the fleet's tool channel — the
+  `tool` directive in the tenant's tooling module at an immutable
+  pseudo-version or release-version pin, admitted by the canonical tool
+  catalog — and therefore requires no hub release. Source-based execution in
+  tenant CI — a hub checkout or `go run` — is not permitted. The verification
+  semantics live exactly once in the hub's CLI; the verifier orchestrates the
+  pinned tool and never re-implements the proof.
 
 ## 4. Failure semantics
 
@@ -46,6 +52,6 @@ rendered instance by hand to silence the guard is a policy violation.
 
 | Metric | Target |
 |--------|--------|
-| Tenants with verify as a required merge check | 100 % |
-| Tenant CI runs consuming the digest-pinned release binary | 100 % |
+| Tenants with the license proof as a required merge check | 100 % |
+| Tenant CI runs consuming the CLI through the pinned tooling module | 100 % |
 | Tenant CI runs fetching the tool from source | 0 % |
