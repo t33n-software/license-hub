@@ -144,9 +144,9 @@ rendered instance by hand to silence the guard is a policy violation.
 
 ## 7. Consumption contract
 
-In CI the CLI is consumed exclusively as a digest-pinned, signature- and
-attestation-verified release binary of this hub, resolved through the
-consuming repository's pinned tooling module. Source-based execution in tenant
-CI — a hub checkout or `go run` — is not permitted. Local authoring with the
-CLI (render, verify, digest) is the development path and does not replace the
-CI gate.
+In CI the CLI is consumed through the fleet's tool channel — the `tool`
+directive in the consuming repository's pinned tooling module at an immutable
+pseudo-version or release-version pin, admitted by the canonical tool catalog;
+no hub release is required. Source-based execution in tenant CI — a hub
+checkout or `go run` — is not permitted. Local authoring with the CLI (render,
+verify, digest) is the development path and does not replace the CI gate.

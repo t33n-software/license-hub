@@ -11,9 +11,9 @@ process as a merge-blocking required check. A tenant release must not be
 produced from a state in which the committed license instance fails
 verification.
 
-The binding contract for this gate — including the stable check context
-`License instance verification`, the shared-line ruleset binding, the
-digest-pinned binary consumption rule, and the failure semantics — is owned by
+The binding contract for this gate — including the single existing canonical
+conformance check context, the shared-line ruleset binding, the tooling-module
+consumption rule, and the failure semantics — is owned by
 [../tenant-verify-convention.md](../tenant-verify-convention.md) and is not
 restated here.
 
