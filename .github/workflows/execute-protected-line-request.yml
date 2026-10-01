@@ -6,14 +6,16 @@ on:
   workflow_dispatch:
     inputs:
       request_id:
-        description: "Durable release-request identifier authorized by the request controller"
+        description: Durable release-request identifier authorized by the request controller.
         required: true
         type: string
+      recovery:
+        description: Read-only recovery finalization of a verification-pending request on the main line.
+        required: false
+        type: boolean
+        default: false
 
-permissions:
-  actions: read
-  contents: read
-  deployments: write
+permissions: {}
 
 concurrency:
   group: protected-line-request-${{ inputs.request_id }}
@@ -21,154 +23,15 @@ concurrency:
 
 jobs:
   execute:
-    if: github.repository == 't33n-software/license-hub'
-    name: Execute bound protected-line request
-    runs-on: ubuntu-24.04
-    environment: release-execution
+    name: Release execution
     permissions:
       actions: read
       contents: write
       deployments: write
-    outputs:
-      request_id: ${{ steps.authorization.outputs.request_id }}
-      source_sha: ${{ steps.authorization.outputs.source_sha }}
-      target: ${{ steps.authorization.outputs.target }}
-      needs_mutation: ${{ steps.authorization.outputs.needs_mutation }}
-    steps:
-      - name: Check out complete repository history
-        uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
-        with:
-          fetch-depth: 0
-          persist-credentials: true
-
-      - name: Install Cosign for CLI checksum verification
-        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
-        with:
-          cosign-release: v3.0.6
-
-      - name: Fetch and verify the pinned git-governance CLI
-        id: cli
-        shell: bash
-        env:
-          GG_VERSION: "1.1.0"
-        run: |
-          set -euo pipefail
-          base="https://github.com/t33n-software/git-governance/releases/download/v${GG_VERSION}"
-          curl -fSLO --retry 3 --retry-all-errors "${base}/git-governance_${GG_VERSION}_linux_amd64.tar.gz"
-          curl -fSLO --retry 3 --retry-all-errors "${base}/git-governance_${GG_VERSION}_checksums.txt"
-          curl -fSLO --retry 3 --retry-all-errors "${base}/git-governance_${GG_VERSION}_checksums.txt.sigstore.json"
-          cosign verify-blob \
-            --bundle "git-governance_${GG_VERSION}_checksums.txt.sigstore.json" \
-            --certificate-oidc-issuer "https://github.com/login/oauth" \
-            --certificate-identity-regexp "https://github.com/t33n-software/git-governance/.github/workflows/publish-release-artifacts.yml@refs/tags/v.*" \
-            "git-governance_${GG_VERSION}_checksums.txt"
-          grep "linux_amd64.tar.gz$" "git-governance_${GG_VERSION}_checksums.txt" | sha256sum --check
-          mkdir -p .build/bin
-          tar -xzf "git-governance_${GG_VERSION}_linux_amd64.tar.gz" git-governance
-          mv git-governance .build/bin/git-governance
-          .build/bin/git-governance --version
-
-      - name: Authorize bound protected-line execution
-        id: authorization
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GIT_GOVERNANCE_WORKFLOW_TOKEN: server
-          REQUEST_ID: ${{ inputs.request_id }}
-          EXECUTOR_RUN: ${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          result="$(.build/bin/git-governance \
-            --interactive never \
-            --output json \
-            --yes \
-            --pull-request-provider github \
-            workflow release execute-request \
-            --request-id "$REQUEST_ID" \
-            --executor-run "$EXECUTOR_RUN")"
-          request_id="$(jq --exit-status --raw-output '.fields.requestID' <<<"$result")"
-          source_sha="$(jq --exit-status --raw-output '.fields.sourceSHA' <<<"$result")"
-          target="$(jq --exit-status --raw-output '.fields.target' <<<"$result")"
-          needs_mutation="$(jq --exit-status --raw-output '.fields.needsMutation' <<<"$result")"
-          printf 'request_id=%s\n' "$request_id" >> "$GITHUB_OUTPUT"
-          printf 'source_sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
-          printf 'target=%s\n' "$target" >> "$GITHUB_OUTPUT"
-          printf 'needs_mutation=%s\n' "$needs_mutation" >> "$GITHUB_OUTPUT"
-
-      - name: Create the one authorized protected line
-        if: ${{ steps.authorization.outputs.needs_mutation == 'true' }}
-        shell: bash
-        env:
-          SOURCE_SHA: ${{ steps.authorization.outputs.source_sha }}
-          TARGET: ${{ steps.authorization.outputs.target }}
-        run: |
-          set -euo pipefail
-          git cat-file -e "${SOURCE_SHA}^{commit}"
-          existing="$(git ls-remote --heads origin "refs/heads/${TARGET}" | cut -f1)"
-          if test -n "$existing"; then
-            test "$existing" = "$SOURCE_SHA" || {
-              echo "protected line exists at an unauthorized revision" >&2
-              exit 1
-            }
-            exit 0
-          fi
-          git push origin "${SOURCE_SHA}:refs/heads/${TARGET}"
-
-  finalize:
-    if: ${{ always() }}
-    needs: execute
-    name: Finalize bound protected-line request
-    runs-on: ubuntu-24.04
-    permissions:
-      actions: read
-      contents: read
-      deployments: write
-    steps:
-      - name: Check out trusted finalizer source
-        uses: actions/checkout@9f698171ed81b15d1823a05fc7211befd50c8ae0 # v6.0.3
-        with:
-          persist-credentials: false
-
-      - name: Install Cosign for CLI checksum verification
-        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
-        with:
-          cosign-release: v3.0.6
-
-      - name: Fetch and verify the pinned git-governance CLI
-        shell: bash
-        env:
-          GG_VERSION: "1.1.0"
-        run: |
-          set -euo pipefail
-          base="https://github.com/t33n-software/git-governance/releases/download/v${GG_VERSION}"
-          curl -fSLO --retry 3 --retry-all-errors "${base}/git-governance_${GG_VERSION}_linux_amd64.tar.gz"
-          curl -fSLO --retry 3 --retry-all-errors "${base}/git-governance_${GG_VERSION}_checksums.txt"
-          curl -fSLO --retry 3 --retry-all-errors "${base}/git-governance_${GG_VERSION}_checksums.txt.sigstore.json"
-          cosign verify-blob \
-            --bundle "git-governance_${GG_VERSION}_checksums.txt.sigstore.json" \
-            --certificate-oidc-issuer "https://github.com/login/oauth" \
-            --certificate-identity-regexp "https://github.com/t33n-software/git-governance/.github/workflows/publish-release-artifacts.yml@refs/tags/v.*" \
-            "git-governance_${GG_VERSION}_checksums.txt"
-          grep "linux_amd64.tar.gz$" "git-governance_${GG_VERSION}_checksums.txt" | sha256sum --check
-          mkdir -p .build/bin
-          tar -xzf "git-governance_${GG_VERSION}_linux_amd64.tar.gz" git-governance
-          mv git-governance .build/bin/git-governance
-          .build/bin/git-governance --version
-
-      - name: Independently finalize the bound request
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GIT_GOVERNANCE_WORKFLOW_TOKEN: server
-          REQUEST_ID: ${{ inputs.request_id }}
-          EXECUTOR_RUN: ${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          .build/bin/git-governance \
-            --interactive never \
-            --output json \
-            --yes \
-            --pull-request-provider github \
-            workflow release finalize-request \
-            --request-id "$REQUEST_ID" \
-            --executor-run "$EXECUTOR_RUN"
+    uses: t33n-software/git-governance/.github/workflows/reusable-execute-protected-line-request.yml@77da3857d8db3f3567522651750980e087c0a6eb
+    with:
+      request_id: ${{ inputs.request_id }}
+      recovery: ${{ inputs.recovery }}
+      repository: ${{ github.repository }}
+      execution_environment: release-execution
+      governance_repository: t33n-software/git-governance

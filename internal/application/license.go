@@ -2,6 +2,7 @@
 package application
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,19 @@ import (
 	"github.com/t33n-software/license-hub/internal/domain/render"
 	"github.com/t33n-software/license-hub/internal/domain/values"
 )
+
+// ErrMissingValues marks an incomplete values document; the CLI maps it to
+// the VALUE_INVALID error code of the structured error contract.
+//
+// Convention: docs/conventions/cli/output/README.md
+var ErrMissingValues = errors.New("missing required values")
+
+// ErrUnresolvedPlaceholders marks a render whose anchors stay unresolved; the
+// CLI maps it to the VALUE_INVALID error code of the structured error
+// contract.
+//
+// Convention: docs/conventions/cli/output/README.md
+var ErrUnresolvedPlaceholders = errors.New("unresolved placeholders")
 
 // FileSystem is the storage port consumed by the license use cases.
 type FileSystem interface {
@@ -43,28 +57,67 @@ type RenderResult struct {
 	Digest  string
 }
 
-// Render renders the canonical template into the LICENSE and LICENSES/
-// artifacts of the target directory.
-func (s *LicenseService) Render(req RenderRequest) (RenderResult, error) {
+// preparedRender carries the validated inputs of one render: the canonical
+// content, the template bytes, and the resolved instance targets.
+type preparedRender struct {
+	content  string
+	template []byte
+	targets  []string
+}
+
+// prepare reads and validates every input of a render without writing
+// anything.
+func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
 	template, err := s.fs.ReadFile(req.TemplatePath)
 	if err != nil {
-		return RenderResult{}, fmt.Errorf("read template: %w", err)
+		return preparedRender{}, fmt.Errorf("read template: %w", err)
 	}
 	merged, err := s.mergedValues(req.OrgDefaultsPath, req.ValuesPath)
 	if err != nil {
-		return RenderResult{}, err
+		return preparedRender{}, err
 	}
 	content := render.Execute(string(template), merged)
 	if unresolved := placeholder.Unresolved(content); len(unresolved) > 0 {
-		return RenderResult{}, fmt.Errorf("unresolved placeholders: %s", strings.Join(unresolved, ", "))
+		return preparedRender{}, fmt.Errorf("%w: %s", ErrUnresolvedPlaceholders, strings.Join(unresolved, ", "))
 	}
-	targets := instancePaths(req.OutDir, merged["LICENSE_ID"])
-	for _, target := range targets {
-		if err := s.fs.WriteFile(target, []byte(content)); err != nil {
+	return preparedRender{
+		content:  content,
+		template: template,
+		targets:  instancePaths(req.OutDir, merged),
+	}, nil
+}
+
+// Render renders the canonical template into the LICENSE and LICENSES/
+// artifacts of the target directory.
+func (s *LicenseService) Render(req RenderRequest) (RenderResult, error) {
+	prepared, err := s.prepare(req)
+	if err != nil {
+		return RenderResult{}, err
+	}
+	for _, target := range prepared.targets {
+		if err := s.fs.WriteFile(target, []byte(prepared.content)); err != nil {
 			return RenderResult{}, fmt.Errorf("write %s: %w", target, err)
 		}
 	}
-	return RenderResult{Written: targets, Digest: digest.SHA256(template)}, nil
+	return RenderResult{Written: prepared.targets, Digest: digest.SHA256(prepared.template)}, nil
+}
+
+// PlanResult reports what a render would write, without writing it.
+type PlanResult struct {
+	Targets []string
+	Digest  string
+}
+
+// PlanRender computes the render plan without mutating anything.
+//
+// Convention: docs/conventions/cli/interaction/README.md (the dry-run duty of
+// every mutating command)
+func (s *LicenseService) PlanRender(req RenderRequest) (PlanResult, error) {
+	prepared, err := s.prepare(req)
+	if err != nil {
+		return PlanResult{}, err
+	}
+	return PlanResult{Targets: prepared.targets, Digest: digest.SHA256(prepared.template)}, nil
 }
 
 // VerifyRequest describes one instance verification.
@@ -100,7 +153,7 @@ func (s *LicenseService) Verify(req VerifyRequest) ([]string, error) {
 	if unresolved := placeholder.Unresolved(content); len(unresolved) > 0 {
 		violations = append(violations, "unresolved placeholders: "+strings.Join(unresolved, ", "))
 	}
-	for _, target := range instancePaths(req.Dir, merged["LICENSE_ID"]) {
+	for _, target := range instancePaths(req.Dir, merged) {
 		committed, err := s.fs.ReadFile(target)
 		if err != nil {
 			violations = append(violations, "missing rendered file: "+target)
@@ -148,7 +201,7 @@ func (s *LicenseService) mergedValues(orgDefaultsPath, valuesPath string) (map[s
 	}
 	merged := values.Merge(orgDefaults, project)
 	if missing := values.MissingRequired(merged); len(missing) > 0 {
-		return nil, fmt.Errorf("missing required values: %s", strings.Join(missing, ", "))
+		return nil, fmt.Errorf("%w: %s", ErrMissingValues, strings.Join(missing, ", "))
 	}
 	return merged, nil
 }
@@ -165,9 +218,17 @@ func (s *LicenseService) readValues(path string) (map[string]string, error) {
 	return parsed, nil
 }
 
-func instancePaths(dir, licenseID string) []string {
+// instancePaths resolves the canonical instance locations. The REUSE license
+// text file carries the tenant-declared SPDX identifier when the values
+// declare one; custom licenses without a listed identifier keep the
+// LicenseRef-<LICENSE_ID> form.
+func instancePaths(dir string, merged map[string]string) []string {
+	stem := "LicenseRef-" + merged["LICENSE_ID"]
+	if identifier := strings.TrimSpace(merged["SPDX_LICENSE_IDENTIFIER"]); identifier != "" {
+		stem = identifier
+	}
 	return []string{
 		filepath.Join(dir, "LICENSE"),
-		filepath.Join(dir, "LICENSES", "LicenseRef-"+licenseID+".txt"),
+		filepath.Join(dir, "LICENSES", stem+".txt"),
 	}
 }

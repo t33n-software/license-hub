@@ -15,11 +15,12 @@ project or substantially similar forks is prohibited. See `LICENSE`.
 |------|---------|
 | `templates/` | Canonical license template families (see `templates/README.md`) |
 | `org-defaults.json` | Organization constants injected into every render |
-| `registry.json` | Audit index of known tenant instances |
 | `POLICY.md` | Family assignment, legal SemVer, adoption, placeholder contract |
 | `cmd/license` | `render`, `verify`, `digest`, `version` CLI |
-| `cmd/build` | Ordered local quality gate runner |
-| `cmd/check-coverage` | 100.0% statement-coverage gate |
+| `docs/licensing/` | Self-contained license taxonomy canon and per-template documentation |
+| `docs/infrastructure/` | Template contract, tenant control files, render/verify, CI integration |
+| `docs/conventions/cli/` | Organization-wide CLI conventions (help, value domains, output, interaction, errors, configuration, security, lifecycle, testing, distribution, identity) |
+| `docs/conventions/hosting-platforms/github/rule-sets/` | Organization-wide GitHub ruleset binding of this repository (canonical definitions live in `git-governance`) |
 
 ## Tenant adoption in four steps
 
@@ -31,7 +32,8 @@ project or substantially similar forks is prohibited. See `LICENSE`.
      --template templates/custom/norepublish/NoRepublish-1.0.0.hbs \
      --org-defaults org-defaults.json \
      --values license.values.json \
-     --out .
+     --out . \
+     --yes
    ```
 
 3. Commit the rendered `LICENSE` and `LICENSES/LicenseRef-<ID>.txt`.
@@ -44,5 +46,5 @@ The full contract is documented in `docs/adoption-guide.md` and `POLICY.md`.
 See `CONTRIBUTING.md`. The full local gate is:
 
 ```bash
-go run -mod=readonly ./cmd/build
+go tool -modfile tools/go.mod quality-gate
 ```

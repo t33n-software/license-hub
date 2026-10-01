@@ -25,7 +25,7 @@ repository policy because it mutates a developer's global Go configuration.
 
 ```powershell
 go test -mod=readonly ./...
-go run -mod=readonly .\cmd\check-coverage
+go tool -modfile tools/go.mod check-coverage
 go vet -mod=readonly ./...
 go run -mod=readonly .\cmd\license version
 ```
@@ -57,20 +57,22 @@ Every behavior change requires tests at the lowest meaningful boundary:
 | Template, placeholder, or digest grammar | same-package whitebox table tests and fuzz seed |
 | Values or lockfile decoding | decoder whitebox test and fuzz seed |
 | CLI flags or command surface | command contract test |
+| CLI help or value-domain surface | help contract test against the command registry, property-based acceptance and rejection tests per value class, and the help-first consumer test (see `docs/conventions/cli/testing/README.md`) |
 
 Run the full local gate:
 
 ```powershell
-go run -mod=readonly .\cmd\build
+go tool -modfile tools/go.mod quality-gate
 ```
 
-The build runner owns the complete ordered quality sequence and resolves its
-pinned development tools from `tools/go.mod`; do not require globally
-installed linters, vulnerability scanners, or Lefthook binaries.
+The pinned quality-gate orchestrator owns the complete ordered quality
+sequence and resolves every development tool from `tools/go.mod`; do not
+require globally installed linters, vulnerability scanners, or Lefthook
+binaries.
 
-`cmd/check-coverage` runs its coverage tests uncached. It rejects every Go
-package reported without a `_test.go` file and every package with executable
-statements below `100.0%` coverage.
+The pinned `check-coverage` tool runs its coverage tests uncached. It rejects
+every Go package reported without a `_test.go` file and every package with
+executable statements below `100.0%` coverage.
 
 Dependency updates belong in a separately reviewed update lane. That lane is
 the only place allowed to run `go get` or a mutating `go mod tidy`; normal
@@ -131,7 +133,21 @@ external rule files or unpublished documentation.
 
 ## Release handoff
 
-The local CLI prepares release promotion only. Template family releases
-(`<family>/v<semver>`) and CLI releases (`v<semver>`) are published by the
-release workflows as immutable releases with checksums, SBOMs, signatures,
-and attestations. Do not create release tags from a developer workstation.
+The local CLI prepares release promotion only. After a protected
+`release/<semver> -> main` merge, the `Tag Promoted Release` caller runs the
+governed family payload that creates the annotated immutable `v<semver>` tag
+at the merge commit, and the `Publish Release Artifacts` caller delivers the
+CLI release artifact sets; template family releases stay with the
+repository-specific `release-template.yml` lane. Do not create release tags
+from a developer workstation.
+
+The lifecycle lanes are the thin, hash-verified callers of the centralized
+release-lifecycle family owned by the `git-governance` home. The tenant builds
+the governance CLI from its pinned tools module; the protected environments
+`release-request`, `release-execution`, `release-delivery`, and
+`release-reconciliation` gate the mutations. Recovery is the bound mode of the
+executor payload; there is no separate recovery lane.
+
+Broker-backed lanes from the reference project (credential-broker smoke and
+server-side reconciliation publishing) remain excluded in the `github-only`
+delivery variant until a credential broker exists for this organization.
