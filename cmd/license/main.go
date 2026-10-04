@@ -370,7 +370,7 @@ func failService(renderer cli.Renderer, command string, err error) int {
 	case errors.Is(err, application.ErrInvalidEcosystemSurface):
 		record.Code = contract.ErrValueInvalid
 		record.Field = "ecosystem"
-		record.Remediation = "repair the declared ecosystem surfaces (the governed seam or the npm manifest), then rerun; see spec/ecosystem-license-metadata.md"
+		record.Remediation = "repair the declared ecosystem surfaces (the governed seam or the declared ecosystem manifests), then rerun; see spec/ecosystem-license-metadata.md"
 	}
 	renderer.WriteError(record)
 	if record.Code == contract.ErrExecution {

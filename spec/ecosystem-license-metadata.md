@@ -19,12 +19,14 @@ type.
    declaration. The declaration is consumed read-only — never copied and
    never re-declared.
 2. **Matrix row.** The declared language selects exactly one ecosystem row.
-   The initial row set: `node-typescript` selects the npm surface
-   (`package.json`, field `license`); Go selects no manifest field — the
-   `LICENSE` file at the module root is the truth surface, and the adapter
-   aligns nothing. Additional rows are grown content-driven when a consuming
-   surface exists, with the field semantics verified against the official
-   ecosystem documentation before the row is implemented; unverified
+   The implemented row set: `node-typescript` selects the npm surface
+   (`package.json`, field `license`); `python` selects the pyproject.toml
+   surface (PEP 621/639: field `license` as the SPDX expression string and
+   field `license-files` as the glob list); Go selects no manifest field —
+   the `LICENSE` file at the module root is the truth surface, and the
+   adapter aligns nothing. Additional rows are grown content-driven when a
+   consuming surface exists, with the field semantics verified against the
+   official ecosystem documentation before the row is implemented; unverified
    semantics fail closed instead of guessing.
 3. **Projection.** The expected field value is derived from the license lock
    (template, version, digest) together with the tenant values: a declared
@@ -48,7 +50,32 @@ The npm manifest carries two other identity surfaces beside the license
 field: `name` and `author`. Both belong to the package identity lane and are
 never read or written by the license render.
 
-## 3. Render alignment discipline
+## 3. The Python alignment contract
+
+The Python row targets `pyproject.toml` under PEP 621/639. The bound
+organization target form for the file-based custom family is the SPDX
+sideload expression `LicenseRef-<LICENSE_ID>` (the tenant `LICENSE_ID`
+value), paired with the license text glob list `["LICENSE"]` in the
+`license-files` field; a declared `SPDX_LICENSE_IDENTIFIER` projects itself
+into both surfaces.
+
+The adapter's scanner reads the `[project]` table strictly and lexes the
+remaining document structurally. A structural break anywhere — an
+unterminated string, a malformed or duplicated header, a duplicate key, a
+value the scanner cannot interpret — refuses the whole surface fail-closed.
+The dotted-key forms that would create or shadow the license surface
+outside the canonical table (a dotted key in `[project]` whose first
+segment names a license-relevant key, and any root-level declaration of the
+project name) are refused for the same reason.
+
+The deprecated PEP 621 `license` table subkeys (`text`/`file`) are the same
+license field in its deprecated value form: the render aligns them to the
+string expression form. The `License ::` classifier entries are the
+deprecated license declaration form: the verify lane reports them as a
+finding whose remediation is an explicit tenant decision, and the alignment
+never rewrites the classifiers array.
+
+## 4. Render alignment discipline
 
 The render is the sanctioned writer of tenant license surfaces, and the same
 governed act aligns the ecosystem license fields. Four disciplines bind
@@ -71,7 +98,7 @@ manifest is absent, and the dry-run plan previews the alignment without
 writing. A non-string license member or an unscannable manifest is refused
 fail-closed instead of being rewritten.
 
-## 4. Verification finding classes
+## 5. Verification finding classes
 
 Verification is fail-closed in both directions and yields exactly three
 finding classes:
@@ -91,16 +118,16 @@ finding classes:
 A diverging field is never adopted from the manifest into the lock; the
 correction direction is always lock → manifest through the render.
 
-## 5. Adapter set and growth rule
+## 6. Adapter set and growth rule
 
-The npm adapter is the initial implementation. Every additional ecosystem
+The npm and Python adapters are implemented. Every additional ecosystem
 adapter is born content-driven when a consuming project surface exists, and
 its matrix row records either the canonical field semantics (verified
 against the official ecosystem documentation at specification time) or the
 explicit verdict that the ecosystem carries no manifest field — for those
 rows the file family is the declared truth and the adapter aligns nothing.
 
-## 6. Do / Don't
+## 7. Do / Don't
 
 **Do:** derive every expected field value from the lock through the matrix
 row; prove declaration, manifest, and field fail-closed in both directions;

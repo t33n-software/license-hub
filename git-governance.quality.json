@@ -42,6 +42,11 @@
         "package": "./internal/domain/ecosystem",
         "target": "FuzzAlignNpmLicense",
         "time": "50000x"
+      },
+      {
+        "package": "./internal/domain/ecosystem",
+        "target": "FuzzAlignPythonLicense",
+        "time": "50000x"
       }
     ]
   }
