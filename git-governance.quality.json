@@ -37,6 +37,11 @@
         "package": "./internal/domain/lockfile",
         "target": "FuzzParse",
         "time": "50000x"
+      },
+      {
+        "package": "./internal/domain/ecosystem",
+        "target": "FuzzAlignNpmLicense",
+        "time": "50000x"
       }
     ]
   }

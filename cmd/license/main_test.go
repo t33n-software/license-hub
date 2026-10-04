@@ -671,3 +671,108 @@ func TestMainExitsWithRunResult(t *testing.T) {
 		t.Fatalf("main() exit = %d, want 0", got)
 	}
 }
+
+// --- Ecosystem license surfaces ---
+
+const cliNodeSeam = `{"schemaVersion":4,"toolchain":{"language":"node-typescript","version":"26.10.0"}}`
+
+func writeNpmSurface(t *testing.T, out, seam, manifest string) {
+	t.Helper()
+	if seam != "" {
+		if err := os.WriteFile(filepath.Join(out, "git-governance.quality.json"), []byte(seam), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if manifest != "" {
+		if err := os.WriteFile(filepath.Join(out, "package.json"), []byte(manifest), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestRenderPrintsTheAlignedNpmSurface(t *testing.T) {
+	dir := seedRepo(t)
+	out := t.TempDir()
+	writeNpmSurface(t, out, cliNodeSeam, "{\n  \"name\": \"example-project\",\n  \"license\": \"MIT\"\n}\n")
+	code, stdout, _ := runCLI(append(renderArgs(dir, out), "--yes")...)
+	if code != contract.ExitSuccess {
+		t.Fatalf("render() = %d", code)
+	}
+	if !strings.Contains(stdout, "aligned ") || !strings.Contains(stdout, filepath.Join(out, "package.json")) {
+		t.Fatalf("render() stdout misses the aligned surface:\n%s", stdout)
+	}
+}
+
+func TestRenderPlanPrintsTheNpmAlignment(t *testing.T) {
+	dir := seedRepo(t)
+	out := t.TempDir()
+	writeNpmSurface(t, out, cliNodeSeam, "{\n  \"license\": \"MIT\"\n}\n")
+	code, stdout, _ := runCLI(append(renderArgs(dir, out), "--dry-run")...)
+	if code != contract.ExitSuccess {
+		t.Fatalf("render --dry-run() = %d", code)
+	}
+	if !strings.Contains(stdout, "would align") {
+		t.Fatalf("render --dry-run() stdout misses the alignment preview:\n%s", stdout)
+	}
+}
+
+func TestRenderPlanSkipsTheAbsentDeclaredManifest(t *testing.T) {
+	dir := seedRepo(t)
+	out := t.TempDir()
+	writeNpmSurface(t, out, cliNodeSeam, "")
+	code, stdout, _ := runCLI(append(renderArgs(dir, out), "--dry-run")...)
+	if code != contract.ExitSuccess {
+		t.Fatalf("render --dry-run() = %d", code)
+	}
+	if !strings.Contains(stdout, "would skip") {
+		t.Fatalf("render --dry-run() stdout misses the skip preview:\n%s", stdout)
+	}
+}
+
+func TestRenderSkipsTheAbsentDeclaredManifest(t *testing.T) {
+	dir := seedRepo(t)
+	out := t.TempDir()
+	writeNpmSurface(t, out, cliNodeSeam, "")
+	code, stdout, _ := runCLI(append(renderArgs(dir, out), "--yes")...)
+	if code != contract.ExitSuccess {
+		t.Fatalf("render() = %d", code)
+	}
+	if !strings.Contains(stdout, "skipped ") {
+		t.Fatalf("render() stdout misses the skip note:\n%s", stdout)
+	}
+}
+
+func TestRenderRejectsAnUnscannableNpmManifest(t *testing.T) {
+	dir := seedRepo(t)
+	out := t.TempDir()
+	writeNpmSurface(t, out, cliNodeSeam, `{"license":`)
+	code, stdout, stderr := runCLI(append(renderArgs(dir, out), "--yes")...)
+	if code != contract.ExitUsage {
+		t.Fatalf("render() = %d, want %d", code, contract.ExitUsage)
+	}
+	output := stdout + stderr
+	if !strings.Contains(output, "ecosystem") {
+		t.Fatalf("render() output misses the ecosystem value error:\n%s", output)
+	}
+}
+
+func TestVerifyRejectsADivergingNpmField(t *testing.T) {
+	dir := seedRepo(t)
+	out := t.TempDir()
+	writeNpmSurface(t, out, cliNodeSeam, "{\n  \"license\": \"MIT\"\n}\n")
+	if code, _, _ := runCLI(append(renderArgs(dir, out), "--yes")...); code != contract.ExitSuccess {
+		t.Fatalf("render() = %d", code)
+	}
+	// Simulate the hand edit that diverges from the lock projection.
+	if err := os.WriteFile(filepath.Join(out, "package.json"), []byte("{\n  \"license\": \"MIT\"\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runCLI(verifyArgs(dir, out)...)
+	if code != contract.ExitGovernance {
+		t.Fatalf("verify() = %d, want %d", code, contract.ExitGovernance)
+	}
+	output := stdout + stderr
+	if !strings.Contains(output, "diverges from the lock projection") {
+		t.Fatalf("verify() output misses the divergence finding:\n%s", output)
+	}
+}
