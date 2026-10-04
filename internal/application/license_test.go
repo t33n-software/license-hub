@@ -795,3 +795,277 @@ func TestVerifyNpmCleanWithoutNpmSurfaces(t *testing.T) {
 		t.Fatalf("Verify() violations = %v", violations)
 	}
 }
+
+// --- Python ecosystem surfaces ---
+
+const pythonSeam = `{"schemaVersion":4,"toolchain":{"language":"python","version":"3.14.0"}}`
+
+var pythonManifestPath = filepath.Join("out", "pyproject.toml")
+
+func seedPythonSurface(f *fakeFS, seam, manifest string) {
+	if seam != "" {
+		f.files[seamPath] = []byte(seam)
+	}
+	if manifest != "" {
+		f.files[pythonManifestPath] = []byte(manifest)
+	}
+}
+
+func TestRenderAlignsTheDeclaredPythonSurface(t *testing.T) {
+	f := seededFS(t)
+	seedPythonSurface(f, pythonSeam, "[project]\nname = \"example-project\"\nlicense = \"MIT\"\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !slices.Equal(result.Aligned, []string{pythonManifestPath}) {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	if len(result.Skipped) != 0 {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+	content := string(f.files[pythonManifestPath])
+	want := "[project]\nname = \"example-project\"\nlicense = \"LicenseRef-license-hub-NoRepublish-1.0\"\nlicense-files = [\"LICENSE\"]\n"
+	if content != want {
+		t.Fatalf("Render() manifest = %q, want %q", content, want)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderPythonAlignmentIsIdempotent(t *testing.T) {
+	f := seededFS(t)
+	seedPythonSurface(f, pythonSeam, "[project]\nlicense = \"LicenseRef-license-hub-NoRepublish-1.0\"\nlicense-files = [\"LICENSE\"]\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+}
+
+func TestPlanRenderPreviewsThePythonAlignment(t *testing.T) {
+	f := seededFS(t)
+	seedPythonSurface(f, pythonSeam, "[project]\nlicense = \"MIT\"\n")
+	service := NewLicenseService(f)
+	plan, err := service.PlanRender(renderRequest())
+	if err != nil {
+		t.Fatalf("PlanRender() error = %v", err)
+	}
+	if len(plan.Alignments) != 1 || !strings.Contains(plan.Alignments[0], pythonManifestPath) {
+		t.Fatalf("PlanRender() alignments = %v", plan.Alignments)
+	}
+	if string(f.files[pythonManifestPath]) != "[project]\nlicense = \"MIT\"\n" {
+		t.Fatalf("PlanRender() mutated the manifest: %q", f.files[pythonManifestPath])
+	}
+}
+
+func TestRenderSkipsTheAbsentDeclaredPythonManifest(t *testing.T) {
+	f := seededFS(t)
+	seedPythonSurface(f, pythonSeam, "")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	if len(result.Skipped) != 1 || !strings.Contains(result.Skipped[0], "absent") {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "manifest missing") {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderWithoutDeclarationLeavesPythonSurfacesUntouched(t *testing.T) {
+	f := seededFS(t)
+	seedPythonSurface(f, "", "[project]\nlicense = \"MIT\"\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+}
+
+func TestRenderWithNonPythonDeclarationLeavesPythonSurfacesUntouched(t *testing.T) {
+	f := seededFS(t)
+	seedPythonSurface(f, goSeam, "[project]\nlicense = \"MIT\"\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "without covering declaration") {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderRejectsAnInvalidPythonSurface(t *testing.T) {
+	cases := []struct {
+		name     string
+		seam     string
+		manifest string
+	}{
+		{"invalid seam", "{", ""},
+		{"invalid manifest", pythonSeam, "[project"},
+		{"no project table", pythonSeam, "tool = \"x\"\n"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedPythonSurface(f, testCase.seam, testCase.manifest)
+			service := NewLicenseService(f)
+			_, err := service.Render(renderRequest())
+			if !errors.Is(err, ErrInvalidEcosystemSurface) {
+				t.Fatalf("Render() error = %v, want ErrInvalidEcosystemSurface", err)
+			}
+		})
+	}
+}
+
+func TestRenderReportsPythonReadFailures(t *testing.T) {
+	cases := []struct {
+		name    string
+		blocked string
+		wantIs  error
+		wantErr string
+	}{
+		{"seam read failure", seamPath, os.ErrPermission, "read ecosystem declaration"},
+		{"manifest read failure", pythonManifestPath, os.ErrPermission, "read python manifest"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedPythonSurface(f, pythonSeam, "[project]\nlicense = \"MIT\"\n")
+			f.readErr[testCase.blocked] = testCase.wantIs
+			service := NewLicenseService(f)
+			_, err := service.Render(renderRequest())
+			if !errors.Is(err, testCase.wantIs) || !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Fatalf("Render() error = %v, want %v with %q", err, testCase.wantIs, testCase.wantErr)
+			}
+		})
+	}
+}
+
+func TestRenderPythonAlignWriteError(t *testing.T) {
+	f := seededFS(t)
+	seedPythonSurface(f, pythonSeam, "[project]\nlicense = \"MIT\"\n")
+	f.writeErr[pythonManifestPath] = fmt.Errorf("disk full")
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); err == nil {
+		t.Fatal("Render() expected python manifest write error")
+	}
+}
+
+func TestPlanRenderSkipsTheAbsentDeclaredPythonManifest(t *testing.T) {
+	f := seededFS(t)
+	seedPythonSurface(f, pythonSeam, "")
+	service := NewLicenseService(f)
+	plan, err := service.PlanRender(renderRequest())
+	if err != nil {
+		t.Fatalf("PlanRender() error = %v", err)
+	}
+	if len(plan.Skips) != 1 || !strings.Contains(plan.Skips[0], "absent") {
+		t.Fatalf("PlanRender() skips = %v", plan.Skips)
+	}
+	if len(plan.Alignments) != 0 {
+		t.Fatalf("PlanRender() alignments = %v", plan.Alignments)
+	}
+}
+
+func TestVerifyPythonFindingsFailClosed(t *testing.T) {
+	cases := []struct {
+		name     string
+		seam     string
+		manifest string
+		want     string
+	}{
+		{"diverging field", pythonSeam, "[project]\nlicense = \"MIT\"\n", "diverges from the lock projection"},
+		{"missing field", pythonSeam, "[project]\nname = \"x\"\n", "license field is missing"},
+		{"deprecated table form", pythonSeam, "[project]\nlicense = { text = \"MIT\" }\n", "deprecated license table form"},
+		{"invalid field", pythonSeam, "[project]\nlicense = 7\n", "not a license expression string"},
+		{"files missing", pythonSeam, "[project]\nlicense = \"LicenseRef-license-hub-NoRepublish-1.0\"\n", "license-files field is missing"},
+		{"files diverging", pythonSeam, "[project]\nlicense = \"LicenseRef-license-hub-NoRepublish-1.0\"\nlicense-files = [\"A\"]\n", "license-files field diverges"},
+		{"files invalid form", pythonSeam, "[project]\nlicense = \"LicenseRef-license-hub-NoRepublish-1.0\"\nlicense-files = \"LICENSE\"\n", "not an array of strings"},
+		{"deprecated classifiers", pythonSeam, "[project]\nlicense = \"LicenseRef-license-hub-NoRepublish-1.0\"\nlicense-files = [\"LICENSE\"]\nclassifiers = [\"License :: OSI Approved :: MIT License\"]\n", "deprecated License :: classifiers"},
+		{"unscannable manifest", pythonSeam, "[project", "cannot be proven"},
+		{"shadow without declaration", "", "[project]\nlicense = \"MIT\"\n", "without covering declaration"},
+		{"shadow with other language", goSeam, "[project]\nlicense = \"MIT\"\n", "without covering declaration"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedPythonSurface(f, testCase.seam, testCase.manifest)
+			service := NewLicenseService(f)
+			violations, err := service.Verify(verifyRequest(""))
+			if err != nil {
+				t.Fatalf("Verify() error = %v", err)
+			}
+			found := false
+			for _, violation := range violations {
+				if strings.Contains(violation, testCase.want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("Verify() violations = %v, want %q", violations, testCase.want)
+			}
+		})
+	}
+}
+
+func TestVerifyPythonReportsDeprecatedClassifiersAfterAlign(t *testing.T) {
+	f := seededFS(t)
+	seedPythonSurface(f, pythonSeam, "[project]\nlicense = \"MIT\"\nclassifiers = [\"License :: OSI Approved :: MIT License\"]\n")
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "deprecated License :: classifiers") {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestVerifyPythonCleanWithoutPythonSurfaces(t *testing.T) {
+	f := seededFS(t)
+	seedPythonSurface(f, goSeam, "")
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}

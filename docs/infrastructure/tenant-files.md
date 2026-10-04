@@ -70,3 +70,21 @@ and therefore never belong in a secret store.
 | `license.values.json` | Tenant | Tenant pull request |
 | `license.lock.json` | Tenant, via adoption pull request | Verify lane digest proof |
 | Rendered instances (`LICENSE`, `LICENSES/`) | Nowhere — regenerated only | Drift guard rejects hand edits |
+| Ecosystem manifest license fields | Nowhere — aligned only by the render | Drift guard rejects hand edits |
+
+## 5. Ecosystem manifest license fields
+
+The declaration seam (`git-governance.quality.json`, field
+`toolchain.language`) selects the ecosystem row whose manifest license
+fields the render aligns to the lock projection:
+
+| Language | Manifest | Aligned fields |
+|----------|----------|----------------|
+| `node-typescript` | `package.json` | `license` → `"SEE LICENSE IN LICENSE"` (or the declared SPDX identifier) |
+| `python` | `pyproject.toml` | `[project]` `license` → `LicenseRef-<LICENSE_ID>` (or the declared SPDX identifier), `license-files` → `["LICENSE"]` |
+
+Manifest license fields are never hand-edited: the verify lane fails closed
+on diverging fields, and the render is the sanctioned writer. Deprecated
+declaration forms — the PEP 621 `license` table subkeys and the
+`License ::` classifier entries — are reported as findings whose remediation
+is an explicit tenant decision.

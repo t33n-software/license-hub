@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/t33n-software/license-hub/internal/domain/digest"
@@ -74,22 +75,51 @@ type RenderResult struct {
 
 // preparedRender carries the validated inputs of one render: the canonical
 // content, the template bytes, the resolved instance targets, and the
-// prepared ecosystem alignment.
+// prepared ecosystem alignments.
 type preparedRender struct {
 	content  string
 	template []byte
 	targets  []string
-	npm      *npmAlignment
+	npm      *ecosystemAlignment
+	python   *ecosystemAlignment
 }
 
-// npmAlignment carries the prepared ecosystem license-field alignment of one
-// render: the aligned manifest content and whether bytes change, or the
-// reason the declared surface cannot be aligned.
-type npmAlignment struct {
+// ecosystemAlignment carries the prepared ecosystem license-field alignment
+// of one render: the aligned manifest content and whether bytes change, or
+// the reason the declared surface cannot be aligned.
+type ecosystemAlignment struct {
 	manifestPath string
 	content      string
 	changed      bool
 	skip         string
+}
+
+// ecosystemRenderRow binds one ecosystem matrix row to its render-side
+// alignment: the declared seam language, the manifest surface, and the
+// lock-projection alignment function.
+type ecosystemRenderRow struct {
+	language      string
+	manifestName  string
+	manifestLabel string
+	align         func(content string, merged map[string]string) (string, bool, error)
+}
+
+var npmRenderRow = ecosystemRenderRow{
+	language:      ecosystem.NpmLanguage,
+	manifestName:  ecosystem.NpmManifestName,
+	manifestLabel: "npm manifest",
+	align: func(content string, merged map[string]string) (string, bool, error) {
+		return ecosystem.AlignNpmLicense(content, ecosystem.NpmProjection(merged))
+	},
+}
+
+var pythonRenderRow = ecosystemRenderRow{
+	language:      ecosystem.PythonLanguage,
+	manifestName:  ecosystem.PythonManifestName,
+	manifestLabel: "python manifest",
+	align: func(content string, merged map[string]string) (string, bool, error) {
+		return ecosystem.AlignPythonLicense(content, ecosystem.PythonProjection(merged), ecosystem.PythonLicenseFilesTarget)
+	},
 }
 
 // prepare reads and validates every input of a render without writing
@@ -107,7 +137,11 @@ func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
 	if unresolved := placeholder.Unresolved(content); len(unresolved) > 0 {
 		return preparedRender{}, fmt.Errorf("%w: %s", ErrUnresolvedPlaceholders, strings.Join(unresolved, ", "))
 	}
-	npm, err := s.prepareNpmAlignment(req, merged)
+	npm, err := s.prepareEcosystemAlignment(req, merged, npmRenderRow)
+	if err != nil {
+		return preparedRender{}, err
+	}
+	python, err := s.prepareEcosystemAlignment(req, merged, pythonRenderRow)
 	if err != nil {
 		return preparedRender{}, err
 	}
@@ -116,6 +150,7 @@ func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
 		template: template,
 		targets:  instancePaths(req.OutDir, merged),
 		npm:      npm,
+		python:   python,
 	}, nil
 }
 
@@ -133,16 +168,30 @@ func (s *LicenseService) Render(req RenderRequest) (RenderResult, error) {
 		}
 	}
 	result := RenderResult{Written: prepared.targets, Digest: digest.SHA256(prepared.template)}
-	if prepared.npm != nil && prepared.npm.changed {
-		if err := s.fs.WriteFile(prepared.npm.manifestPath, []byte(prepared.npm.content)); err != nil {
-			return RenderResult{}, fmt.Errorf("write %s: %w", prepared.npm.manifestPath, err)
+	for _, alignment := range []*ecosystemAlignment{prepared.npm, prepared.python} {
+		if err := s.writeAlignment(alignment, &result); err != nil {
+			return RenderResult{}, err
 		}
-		result.Aligned = append(result.Aligned, prepared.npm.manifestPath)
-	}
-	if prepared.npm != nil && prepared.npm.skip != "" {
-		result.Skipped = append(result.Skipped, prepared.npm.skip)
 	}
 	return result, nil
+}
+
+// writeAlignment writes one prepared ecosystem alignment and reports it in
+// the render result.
+func (s *LicenseService) writeAlignment(alignment *ecosystemAlignment, result *RenderResult) error {
+	if alignment == nil {
+		return nil
+	}
+	if alignment.changed {
+		if err := s.fs.WriteFile(alignment.manifestPath, []byte(alignment.content)); err != nil {
+			return fmt.Errorf("write %s: %w", alignment.manifestPath, err)
+		}
+		result.Aligned = append(result.Aligned, alignment.manifestPath)
+	}
+	if alignment.skip != "" {
+		result.Skipped = append(result.Skipped, alignment.skip)
+	}
+	return nil
 }
 
 // PlanResult reports what a render would write, without writing it.
@@ -166,13 +215,24 @@ func (s *LicenseService) PlanRender(req RenderRequest) (PlanResult, error) {
 		return PlanResult{}, err
 	}
 	plan := PlanResult{Targets: prepared.targets, Digest: digest.SHA256(prepared.template)}
-	if prepared.npm != nil && prepared.npm.changed {
-		plan.Alignments = append(plan.Alignments, "align "+prepared.npm.manifestPath+" to the lock projection")
-	}
-	if prepared.npm != nil && prepared.npm.skip != "" {
-		plan.Skips = append(plan.Skips, prepared.npm.skip)
+	for _, alignment := range []*ecosystemAlignment{prepared.npm, prepared.python} {
+		planAlignment(alignment, &plan)
 	}
 	return plan, nil
+}
+
+// planAlignment previews one prepared ecosystem alignment in the dry-run
+// plan.
+func planAlignment(alignment *ecosystemAlignment, plan *PlanResult) {
+	if alignment == nil {
+		return
+	}
+	if alignment.changed {
+		plan.Alignments = append(plan.Alignments, "align "+alignment.manifestPath+" to the lock projection")
+	}
+	if alignment.skip != "" {
+		plan.Skips = append(plan.Skips, alignment.skip)
+	}
 }
 
 // VerifyRequest describes one instance verification.
@@ -219,11 +279,13 @@ func (s *LicenseService) Verify(req VerifyRequest) ([]string, error) {
 			violations = append(violations, "rendered file drifted from canonical render: "+target)
 		}
 	}
-	npmViolations, err := s.verifyNpm(req, merged)
-	if err != nil {
-		return nil, err
+	for _, row := range []ecosystemVerifyRow{npmVerifyRow, pythonVerifyRow} {
+		rowViolations, err := s.verifyEcosystem(req, merged, row)
+		if err != nil {
+			return nil, err
+		}
+		violations = append(violations, rowViolations...)
 	}
-	violations = append(violations, npmViolations...)
 	return violations, nil
 }
 
@@ -236,14 +298,14 @@ func (s *LicenseService) TemplateDigest(path string) (string, error) {
 	return digest.SHA256(template), nil
 }
 
-// prepareNpmAlignment derives the ecosystem license-field alignment of one
-// render from the declaration seam and the merged tenant values. A missing
-// seam or a non-npm declaration leaves the surface untouched; a declared npm
-// project without a manifest is reported as a skip that the verify lane
-// carries as a fail-closed finding.
+// prepareEcosystemAlignment derives the ecosystem license-field alignment of
+// one render from the declaration seam and the merged tenant values. A
+// missing seam or a foreign declaration leaves the surface untouched; a
+// declared project without a manifest is reported as a skip that the verify
+// lane carries as a fail-closed finding.
 //
 // Convention: spec/ecosystem-license-metadata.md
-func (s *LicenseService) prepareNpmAlignment(req RenderRequest, merged map[string]string) (*npmAlignment, error) {
+func (s *LicenseService) prepareEcosystemAlignment(req RenderRequest, merged map[string]string, row ecosystemRenderRow) (*ecosystemAlignment, error) {
 	seamPath := filepath.Join(req.OutDir, ecosystem.SeamFileName)
 	seamData, err := s.fs.ReadFile(seamPath)
 	if err != nil {
@@ -256,34 +318,57 @@ func (s *LicenseService) prepareNpmAlignment(req RenderRequest, merged map[strin
 	if err != nil {
 		return nil, fmt.Errorf("%w: read ecosystem declaration %s: %v", ErrInvalidEcosystemSurface, seamPath, err)
 	}
-	if language != ecosystem.NpmLanguage {
+	if language != row.language {
 		return nil, nil
 	}
-	manifestPath := filepath.Join(req.OutDir, ecosystem.NpmManifestName)
+	manifestPath := filepath.Join(req.OutDir, row.manifestName)
 	data, err := s.fs.ReadFile(manifestPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return &npmAlignment{
+			return &ecosystemAlignment{
 				manifestPath: manifestPath,
-				skip:         "npm manifest is absent: the declared license surface cannot be aligned",
+				skip:         row.manifestLabel + " is absent: the declared license surface cannot be aligned",
 			}, nil
 		}
-		return nil, fmt.Errorf("read npm manifest %s: %w", manifestPath, err)
+		return nil, fmt.Errorf("read %s %s: %w", row.manifestLabel, manifestPath, err)
 	}
-	aligned, changed, err := ecosystem.AlignNpmLicense(string(data), ecosystem.NpmProjection(merged))
+	aligned, changed, err := row.align(string(data), merged)
 	if err != nil {
-		return nil, fmt.Errorf("%w: align npm manifest %s: %v", ErrInvalidEcosystemSurface, manifestPath, err)
+		return nil, fmt.Errorf("%w: align %s %s: %v", ErrInvalidEcosystemSurface, row.manifestLabel, manifestPath, err)
 	}
-	return &npmAlignment{manifestPath: manifestPath, content: aligned, changed: changed}, nil
+	return &ecosystemAlignment{manifestPath: manifestPath, content: aligned, changed: changed}, nil
 }
 
-// verifyNpm proves the declared npm license surface fail-closed in both
+// ecosystemVerifyRow binds one ecosystem matrix row to its verify-side
+// finding derivation.
+type ecosystemVerifyRow struct {
+	language     string
+	manifestName string
+	label        string
+	findings     func(content, manifestPath string, merged map[string]string) []string
+}
+
+var npmVerifyRow = ecosystemVerifyRow{
+	language:     ecosystem.NpmLanguage,
+	manifestName: ecosystem.NpmManifestName,
+	label:        "npm",
+	findings:     npmFindings,
+}
+
+var pythonVerifyRow = ecosystemVerifyRow{
+	language:     ecosystem.PythonLanguage,
+	manifestName: ecosystem.PythonManifestName,
+	label:        "python",
+	findings:     pythonFindings,
+}
+
+// verifyEcosystem proves one declared ecosystem surface fail-closed in both
 // directions: a declared manifest that is missing or diverging is a finding,
 // a manifest without a covering declaration is a shadow-surface finding, and
 // an unscannable surface is a proof failure.
 //
 // Convention: spec/ecosystem-license-metadata.md
-func (s *LicenseService) verifyNpm(req VerifyRequest, merged map[string]string) ([]string, error) {
+func (s *LicenseService) verifyEcosystem(req VerifyRequest, merged map[string]string, row ecosystemVerifyRow) ([]string, error) {
 	seamPath := filepath.Join(req.Dir, ecosystem.SeamFileName)
 	seamData, seamErr := s.fs.ReadFile(seamPath)
 	language := ""
@@ -299,47 +384,93 @@ func (s *LicenseService) verifyNpm(req VerifyRequest, merged map[string]string) 
 	default:
 		return nil, fmt.Errorf("read ecosystem declaration %s: %w", seamPath, seamErr)
 	}
-	manifestPath := filepath.Join(req.Dir, ecosystem.NpmManifestName)
+	manifestPath := filepath.Join(req.Dir, row.manifestName)
 	data, manifestErr := s.fs.ReadFile(manifestPath)
 	switch {
 	case errors.Is(manifestErr, os.ErrNotExist):
-		if language == ecosystem.NpmLanguage {
+		if language == row.language {
 			return []string{
-				"declared npm ecosystem manifest missing: " + manifestPath +
-					" (declared language: \"" + ecosystem.NpmLanguage + "\")",
+				"declared " + row.label + " ecosystem manifest missing: " + manifestPath +
+					" (declared language: \"" + row.language + "\")",
 			}, nil
 		}
 		return nil, nil
 	case manifestErr != nil:
-		return nil, fmt.Errorf("read npm manifest %s: %w", manifestPath, manifestErr)
+		return nil, fmt.Errorf("read %s manifest %s: %w", row.label, manifestPath, manifestErr)
 	}
-	if language != ecosystem.NpmLanguage {
+	if language != row.language {
 		detail := "no ecosystem declaration found (" + ecosystem.SeamFileName + " is absent)"
 		if seamErr == nil {
 			detail = "declared language: \"" + language + "\""
 		}
 		return []string{
-			"npm license metadata surface without covering declaration: " + manifestPath + " (" + detail + ")",
+			row.label + " license metadata surface without covering declaration: " + manifestPath + " (" + detail + ")",
 		}, nil
 	}
+	return row.findings(string(data), manifestPath, merged), nil
+}
+
+// npmFindings derives the npm license-surface findings from the inspected
+// manifest and the lock projection.
+func npmFindings(content, manifestPath string, merged map[string]string) []string {
 	target := ecosystem.NpmProjection(merged)
-	value, state, err := ecosystem.InspectNpmLicense(string(data))
+	value, state, err := ecosystem.InspectNpmLicense(content)
 	if err != nil {
-		return []string{"npm license surface cannot be proven: " + manifestPath + " (" + err.Error() + ")"}, nil
+		return []string{"npm license surface cannot be proven: " + manifestPath + " (" + err.Error() + ")"}
 	}
 	switch state {
 	case ecosystem.LicenseFieldMissing:
-		return []string{"npm license field is missing: " + manifestPath + " (expected \"" + target + "\")"}, nil
+		return []string{"npm license field is missing: " + manifestPath + " (expected \"" + target + "\")"}
 	case ecosystem.LicenseFieldNonString:
-		return []string{"npm license field is not a JSON string: " + manifestPath + " (expected \"" + target + "\")"}, nil
+		return []string{"npm license field is not a JSON string: " + manifestPath + " (expected \"" + target + "\")"}
 	}
 	if value != target {
 		return []string{
 			"npm license field diverges from the lock projection: observed \"" + value +
 				"\", expected \"" + target + "\" (run the render to align)",
-		}, nil
+		}
 	}
-	return nil, nil
+	return nil
+}
+
+// pythonFindings derives the Python license-surface findings from the
+// inspected manifest and the lock projection: the license field, the
+// license-files globs, and the deprecated License :: classifier guard.
+func pythonFindings(content, manifestPath string, merged map[string]string) []string {
+	target := ecosystem.PythonProjection(merged)
+	surface, err := ecosystem.InspectPythonLicense(content)
+	if err != nil {
+		return []string{"python license surface cannot be proven: " + manifestPath + " (" + err.Error() + ")"}
+	}
+	violations := []string{}
+	switch surface.State {
+	case ecosystem.PythonLicenseMissing:
+		violations = append(violations, "python license field is missing: "+manifestPath+" (expected \""+target+"\")")
+	case ecosystem.PythonLicenseTable:
+		violations = append(violations, "python license field uses the deprecated license table form: "+manifestPath+" (expected \""+target+"\")")
+	case ecosystem.PythonLicenseInvalid:
+		violations = append(violations, "python license field is not a license expression string: "+manifestPath+" (expected \""+target+"\")")
+	case ecosystem.PythonLicenseString:
+		if surface.Value != target {
+			violations = append(violations, "python license field diverges from the lock projection: observed \""+surface.Value+"\", expected \""+target+"\" (run the render to align)")
+		}
+	}
+	filesTarget := ecosystem.PythonLicenseFilesForm(ecosystem.PythonLicenseFilesTarget)
+	switch {
+	case !surface.LicenseFilesSet:
+		violations = append(violations, "python license-files field is missing: "+manifestPath+" (expected "+filesTarget+")")
+	case !surface.LicenseFilesValid:
+		violations = append(violations, "python license-files field is not an array of strings: "+manifestPath)
+	case !slices.Equal(surface.LicenseFiles, ecosystem.PythonLicenseFilesTarget):
+		violations = append(violations, "python license-files field diverges from the lock projection: observed "+ecosystem.PythonLicenseFilesForm(surface.LicenseFiles)+", expected "+filesTarget+" (run the render to align)")
+	}
+	if len(surface.DeprecatedClassifiers) > 0 {
+		violations = append(violations, fmt.Sprintf(
+			"pyproject.toml carries the deprecated License :: classifiers: %s (%d entries; removal is an explicit tenant decision)",
+			manifestPath, len(surface.DeprecatedClassifiers),
+		))
+	}
+	return violations
 }
 
 func (s *LicenseService) verifyLock(path string, template []byte) ([]string, error) {
