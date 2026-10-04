@@ -236,12 +236,17 @@ func TestAlignNpmLicenseRefusesNonStringAndAmbiguousSurfaces(t *testing.T) {
 		{"duplicate member", `{"license":"A","license":"B"}`, ErrAmbiguousField},
 		{"malformed json", `{"license":`, ErrInvalidSurface},
 		{"root not an object", `[1]`, ErrInvalidSurface},
+		{"non-utf-8 target", exampleManifest, ErrInvalidTarget},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			_, _, err := AlignNpmLicense(testCase.content, NpmTargetForm)
+			target := NpmTargetForm
+			if testCase.name == "non-utf-8 target" {
+				target = "MIT\xff"
+			}
+			_, _, err := AlignNpmLicense(testCase.content, target)
 			if !errors.Is(err, testCase.wantErrIs) {
-				t.Fatalf("AlignNpmLicense(%q) error = %v, want %v", testCase.content, err, testCase.wantErrIs)
+				t.Fatalf("AlignNpmLicense(%q, %q) error = %v, want %v", testCase.content, target, err, testCase.wantErrIs)
 			}
 		})
 	}

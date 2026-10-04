@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // NpmLanguage is the seam toolchain language that selects the npm matrix row.
@@ -44,6 +45,11 @@ var ErrAmbiguousField = errors.New("ambiguous license member")
 
 // ErrNonStringField marks a license member whose value is not a JSON string.
 var ErrNonStringField = errors.New("license member is not a JSON string")
+
+// ErrInvalidTarget marks an alignment target that is not a representable
+// license value: the target must be valid UTF-8 so the written JSON string
+// provably decodes back to the projected value.
+var ErrInvalidTarget = errors.New("license target is not valid UTF-8")
 
 // SeamLanguage extracts the declared toolchain language of the governed seam
 // document. A seam without a toolchain block declares no language.
@@ -110,6 +116,9 @@ func InspectNpmLicense(content string) (string, LicenseFieldState, error) {
 // the inserted member is preserved exactly; a re-run over an aligned
 // manifest is a no-op. A non-string license member is refused fail-closed.
 func AlignNpmLicense(content, target string) (string, bool, error) {
+	if !utf8.ValidString(target) {
+		return "", false, ErrInvalidTarget
+	}
 	members, obj, err := parseDocument(content)
 	if err != nil {
 		return "", false, err
