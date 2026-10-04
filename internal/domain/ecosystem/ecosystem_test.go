@@ -63,11 +63,11 @@ const exampleManifest = "{\n  \"name\": \"example-project\",\n" +
 
 func TestInspectNpmLicenseClassifiesTheField(t *testing.T) {
 	cases := []struct {
-		name        string
-		content     string
-		wantValue   string
-		wantState   LicenseFieldState
-		wantErrIs   error
+		name      string
+		content   string
+		wantValue string
+		wantState LicenseFieldState
+		wantErrIs error
 	}{
 		{"string field", exampleManifest, "MIT", LicenseFieldString, nil},
 		{"missing field", `{"name":"x"}`, "", LicenseFieldMissing, nil},
