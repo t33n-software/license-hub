@@ -51,7 +51,7 @@ boundary. It carries the organization constants injected into every render:
 
 ```json
 {
-  "COPYRIGHT_HOLDER": "CyberT33N",
+  "COPYRIGHT_HOLDER": "t33n Software",
   "GOVERNING_LAW": "the Federal Republic of Germany",
   "VENUE": "Germany",
   "PERMISSION_CONTACT": "https://github.com/t33n-software"

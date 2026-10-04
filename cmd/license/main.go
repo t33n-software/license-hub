@@ -246,13 +246,20 @@ func execRender(bound *cli.BoundFlags, renderer cli.Renderer, stdout io.Writer, 
 	if err != nil {
 		return failService(renderer, "render", err)
 	}
+	fields := []cli.Field{
+		{Key: "written", Label: "wrote", Values: result.Written},
+		{Key: "digest", Label: "template digest", Values: []string{result.Digest}},
+	}
+	if len(result.Aligned) > 0 {
+		fields = append(fields, cli.Field{Key: "aligned", Label: "aligned", Values: result.Aligned})
+	}
+	if len(result.Skipped) > 0 {
+		fields = append(fields, cli.Field{Key: "skipped", Label: "skipped", Values: result.Skipped})
+	}
 	renderer.WriteResult(cli.Result{
 		Command: "render",
 		Status:  "ok",
-		Fields: []cli.Field{
-			{Key: "written", Label: "wrote", Values: result.Written},
-			{Key: "digest", Label: "template digest", Values: []string{result.Digest}},
-		},
+		Fields:  fields,
 	})
 	return contract.ExitSuccess
 }
@@ -320,14 +327,21 @@ func versionResult() cli.Result {
 
 // planResult renders the dry-run plan of a render.
 func planResult(plan application.PlanResult) cli.Result {
+	fields := []cli.Field{
+		{Key: "planned", Label: "would write", Values: plan.Targets},
+		{Key: "digest", Label: "template digest", Values: []string{plan.Digest}},
+	}
+	if len(plan.Alignments) > 0 {
+		fields = append(fields, cli.Field{Key: "alignments", Label: "would align", Values: plan.Alignments})
+	}
+	if len(plan.Skips) > 0 {
+		fields = append(fields, cli.Field{Key: "skips", Label: "would skip", Values: plan.Skips})
+	}
 	return cli.Result{
 		Command: "render",
 		Status:  "plan",
 		Message: "dry-run plan: no files written",
-		Fields: []cli.Field{
-			{Key: "planned", Label: "would write", Values: plan.Targets},
-			{Key: "digest", Label: "template digest", Values: []string{plan.Digest}},
-		},
+		Fields:  fields,
 	}
 }
 
@@ -353,6 +367,10 @@ func failService(renderer cli.Renderer, command string, err error) int {
 		record.Code = contract.ErrValueInvalid
 		record.Field = "template"
 		record.Remediation = "resolve every placeholder through the values documents; see docs/infrastructure/template-contract.md"
+	case errors.Is(err, application.ErrInvalidEcosystemSurface):
+		record.Code = contract.ErrValueInvalid
+		record.Field = "ecosystem"
+		record.Remediation = "repair the declared ecosystem surfaces (the governed seam or the npm manifest), then rerun; see spec/ecosystem-license-metadata.md"
 	}
 	renderer.WriteError(record)
 	if record.Code == contract.ErrExecution {

@@ -3,7 +3,7 @@ license-hub No-Republish License
 Version 1.0
 
 SPDX-License-Identifier: LicenseRef-license-hub-NoRepublish-1.0
-Copyright (c) 2026 CyberT33N
+Copyright (c) 2026 t33n Software
 ================================================================================
 
 0. DEFINITIONS
@@ -13,7 +13,7 @@ Copyright (c) 2026 CyberT33N
     documentation, and release artifacts, as made available by the
     Licensor.
 
-0.2 "Licensor" means CyberT33N, the sole copyright holder of
+0.2 "Licensor" means t33n Software, the sole copyright holder of
     the Software and the only party entitled to grant rights under this
     License.
 
@@ -223,4 +223,4 @@ under mandatory applicable law.
      in the Canonical Source, following the REUSE 3.2 specification.
 14.3 Each source file of the Software carries the header:
      SPDX-License-Identifier: LicenseRef-license-hub-NoRepublish-1.0
-     SPDX-FileCopyrightText: 2026 CyberT33N
+     SPDX-FileCopyrightText: 2026 t33n Software
