@@ -45,19 +45,19 @@ var ErrAmbiguousCargoField = errors.New("ambiguous Cargo.toml key")
 // license keys. The keys are mutually exclusive; the surface cannot be
 // aligned or proven deterministically, and the resolution is an explicit
 // tenant decision.
-var ErrExclusiveCargoLicense = errors.New("Cargo.toml declares both exclusive license keys")
+var ErrExclusiveCargoLicense = errors.New("mutually exclusive license keys declared together")
 
 // ErrInvalidCargoLicenseValue marks a license value that is not a string
 // expression.
-var ErrInvalidCargoLicenseValue = errors.New("Cargo.toml license value is not a string expression")
+var ErrInvalidCargoLicenseValue = errors.New("license value is not a string expression")
 
 // ErrInvalidCargoLicenseFile marks a license-file value that is not a
 // string.
-var ErrInvalidCargoLicenseFile = errors.New("Cargo.toml license-file value is not a string")
+var ErrInvalidCargoLicenseFile = errors.New("license-file value is not a string")
 
 // ErrNoPackageTable marks a manifest without the [package] table; the
 // license surface cannot be aligned deterministically without it.
-var ErrNoPackageTable = errors.New("Cargo.toml carries no [package] table")
+var ErrNoPackageTable = errors.New("manifest carries no [package] table")
 
 // CargoLicenseForm carries the projected license field of the lock: the
 // exclusive key name and its string value.
