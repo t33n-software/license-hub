@@ -1069,3 +1069,291 @@ func TestVerifyPythonCleanWithoutPythonSurfaces(t *testing.T) {
 		t.Fatalf("Verify() violations = %v", violations)
 	}
 }
+
+// --- Rust ecosystem surfaces ---
+
+const rustSeam = `{"schemaVersion":4,"toolchain":{"language":"rust","version":"1.90.0"}}`
+
+var cargoManifestPath = filepath.Join("out", "Cargo.toml")
+
+func seedCargoSurface(f *fakeFS, seam, manifest string) {
+	if seam != "" {
+		f.files[seamPath] = []byte(seam)
+	}
+	if manifest != "" {
+		f.files[cargoManifestPath] = []byte(manifest)
+	}
+}
+
+func TestRenderAlignsTheDeclaredCargoSurface(t *testing.T) {
+	f := seededFS(t)
+	seedCargoSurface(f, rustSeam, "[package]\nname = \"example-project\"\nlicense = \"MIT\"\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !slices.Equal(result.Aligned, []string{cargoManifestPath}) {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	if len(result.Skipped) != 0 {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+	content := string(f.files[cargoManifestPath])
+	want := "[package]\nname = \"example-project\"\nlicense-file = \"LICENSE\"\n"
+	if content != want {
+		t.Fatalf("Render() manifest = %q, want %q", content, want)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderAlignsTheDeclaredCargoSpdxSurface(t *testing.T) {
+	f := seededFS(t)
+	f.files["values.json"] = valuesJSON(t, map[string]string{
+		"PROJECT_NAME":            "example-project",
+		"LICENSE_ID":              "example-project-NoRepublish-1.0",
+		"COPYRIGHT_YEAR":          "2026",
+		"CANONICAL_SOURCE_URL":    "https://github.com/t33n-software/example-project",
+		"SPDX_LICENSE_IDENTIFIER": "MIT",
+	})
+	seedCargoSurface(f, rustSeam, "[package]\nname = \"example-project\"\nlicense-file = \"LICENSE\"\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !slices.Equal(result.Aligned, []string{cargoManifestPath}) {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	content := string(f.files[cargoManifestPath])
+	want := "[package]\nname = \"example-project\"\nlicense = \"MIT\"\n"
+	if content != want {
+		t.Fatalf("Render() manifest = %q, want %q", content, want)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderCargoAlignmentIsIdempotent(t *testing.T) {
+	f := seededFS(t)
+	seedCargoSurface(f, rustSeam, "[package]\nlicense-file = \"LICENSE\"\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+}
+
+func TestPlanRenderPreviewsTheCargoAlignment(t *testing.T) {
+	f := seededFS(t)
+	seedCargoSurface(f, rustSeam, "[package]\nlicense = \"MIT\"\n")
+	service := NewLicenseService(f)
+	plan, err := service.PlanRender(renderRequest())
+	if err != nil {
+		t.Fatalf("PlanRender() error = %v", err)
+	}
+	if len(plan.Alignments) != 1 || !strings.Contains(plan.Alignments[0], cargoManifestPath) {
+		t.Fatalf("PlanRender() alignments = %v", plan.Alignments)
+	}
+	if string(f.files[cargoManifestPath]) != "[package]\nlicense = \"MIT\"\n" {
+		t.Fatalf("PlanRender() mutated the manifest: %q", f.files[cargoManifestPath])
+	}
+}
+
+func TestRenderSkipsTheAbsentDeclaredCargoManifest(t *testing.T) {
+	f := seededFS(t)
+	seedCargoSurface(f, rustSeam, "")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	if len(result.Skipped) != 1 || !strings.Contains(result.Skipped[0], "absent") {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "manifest missing") {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderWithoutDeclarationLeavesCargoSurfacesUntouched(t *testing.T) {
+	f := seededFS(t)
+	seedCargoSurface(f, "", "[package]\nlicense = \"MIT\"\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+}
+
+func TestRenderWithNonCargoDeclarationLeavesCargoSurfacesUntouched(t *testing.T) {
+	f := seededFS(t)
+	seedCargoSurface(f, goSeam, "[package]\nlicense = \"MIT\"\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "without covering declaration") {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderRejectsAnInvalidCargoSurface(t *testing.T) {
+	cases := []struct {
+		name     string
+		seam     string
+		manifest string
+	}{
+		{"invalid seam", "{", ""},
+		{"invalid manifest", rustSeam, "[package"},
+		{"no package table", rustSeam, "tool = \"x\"\n"},
+		{"exclusive keys", rustSeam, "[package]\nlicense = \"MIT\"\nlicense-file = \"LICENSE\"\n"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedCargoSurface(f, testCase.seam, testCase.manifest)
+			service := NewLicenseService(f)
+			_, err := service.Render(renderRequest())
+			if !errors.Is(err, ErrInvalidEcosystemSurface) {
+				t.Fatalf("Render() error = %v, want ErrInvalidEcosystemSurface", err)
+			}
+		})
+	}
+}
+
+func TestRenderReportsCargoReadFailures(t *testing.T) {
+	cases := []struct {
+		name    string
+		blocked string
+		wantIs  error
+		wantErr string
+	}{
+		{"seam read failure", seamPath, os.ErrPermission, "read ecosystem declaration"},
+		{"manifest read failure", cargoManifestPath, os.ErrPermission, "read cargo manifest"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedCargoSurface(f, rustSeam, "[package]\nlicense = \"MIT\"\n")
+			f.readErr[testCase.blocked] = testCase.wantIs
+			service := NewLicenseService(f)
+			_, err := service.Render(renderRequest())
+			if !errors.Is(err, testCase.wantIs) || !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Fatalf("Render() error = %v, want %v with %q", err, testCase.wantIs, testCase.wantErr)
+			}
+		})
+	}
+}
+
+func TestRenderCargoAlignWriteError(t *testing.T) {
+	f := seededFS(t)
+	seedCargoSurface(f, rustSeam, "[package]\nlicense = \"MIT\"\n")
+	f.writeErr[cargoManifestPath] = fmt.Errorf("disk full")
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); err == nil {
+		t.Fatal("Render() expected cargo manifest write error")
+	}
+}
+
+func TestPlanRenderSkipsTheAbsentDeclaredCargoManifest(t *testing.T) {
+	f := seededFS(t)
+	seedCargoSurface(f, rustSeam, "")
+	service := NewLicenseService(f)
+	plan, err := service.PlanRender(renderRequest())
+	if err != nil {
+		t.Fatalf("PlanRender() error = %v", err)
+	}
+	if len(plan.Skips) != 1 || !strings.Contains(plan.Skips[0], "absent") {
+		t.Fatalf("PlanRender() skips = %v", plan.Skips)
+	}
+	if len(plan.Alignments) != 0 {
+		t.Fatalf("PlanRender() alignments = %v", plan.Alignments)
+	}
+}
+
+func TestVerifyCargoFindingsFailClosed(t *testing.T) {
+	cases := []struct {
+		name     string
+		seam     string
+		manifest string
+		want     string
+	}{
+		{"diverging expression", rustSeam, "[package]\nlicense = \"MIT\"\n", "diverges from the lock projection"},
+		{"diverging form", rustSeam, "[package]\nlicense-file = \"COPYING\"\n", "diverges from the lock projection"},
+		{"missing field", rustSeam, "[package]\nname = \"x\"\n", "license field is missing"},
+		{"invalid field", rustSeam, "[package]\nlicense = 7\n", "not a license expression string"},
+		{"unscannable manifest", rustSeam, "[package", "cannot be proven"},
+		{"exclusive keys", rustSeam, "[package]\nlicense = \"MIT\"\nlicense-file = \"LICENSE\"\n", "cannot be proven"},
+		{"shadow without declaration", "", "[package]\nlicense = \"MIT\"\n", "without covering declaration"},
+		{"shadow with other language", goSeam, "[package]\nlicense = \"MIT\"\n", "without covering declaration"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedCargoSurface(f, testCase.seam, testCase.manifest)
+			service := NewLicenseService(f)
+			violations, err := service.Verify(verifyRequest(""))
+			if err != nil {
+				t.Fatalf("Verify() error = %v", err)
+			}
+			found := false
+			for _, violation := range violations {
+				if strings.Contains(violation, testCase.want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("Verify() violations = %v, want %q", violations, testCase.want)
+			}
+		})
+	}
+}
+
+func TestVerifyCargoCleanWithoutCargoSurfaces(t *testing.T) {
+	f := seededFS(t)
+	seedCargoSurface(f, goSeam, "")
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
