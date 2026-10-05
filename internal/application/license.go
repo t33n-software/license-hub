@@ -162,6 +162,15 @@ var composerRenderRow = ecosystemRenderRow{
 	},
 }
 
+var gemspecRenderRow = ecosystemRenderRow{
+	language:      ecosystem.RubyLanguage,
+	manifestLabel: "gemspec manifest",
+	align: func(_ string, content string, merged map[string]string) (string, bool, error) {
+		return ecosystem.AlignGemspecLicense(content, ecosystem.GemspecProjection(merged))
+	},
+	discover: ecosystem.GemspecManifestNames,
+}
+
 // prepare reads and validates every input of a render without writing
 // anything.
 func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
@@ -182,7 +191,7 @@ func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
 		template: template,
 		targets:  instancePaths(req.OutDir, merged),
 	}
-	for _, row := range []ecosystemRenderRow{npmRenderRow, pythonRenderRow, cargoRenderRow, mavenRenderRow, nugetRenderRow, composerRenderRow} {
+	for _, row := range []ecosystemRenderRow{npmRenderRow, pythonRenderRow, cargoRenderRow, mavenRenderRow, nugetRenderRow, composerRenderRow, gemspecRenderRow} {
 		alignments, err := s.prepareEcosystemAlignment(req, merged, row)
 		if err != nil {
 			return preparedRender{}, err
@@ -317,7 +326,7 @@ func (s *LicenseService) Verify(req VerifyRequest) ([]string, error) {
 			violations = append(violations, "rendered file drifted from canonical render: "+target)
 		}
 	}
-	for _, row := range []ecosystemVerifyRow{npmVerifyRow, pythonVerifyRow, cargoVerifyRow, mavenVerifyRow, nugetVerifyRow, composerVerifyRow} {
+	for _, row := range []ecosystemVerifyRow{npmVerifyRow, pythonVerifyRow, cargoVerifyRow, mavenVerifyRow, nugetVerifyRow, composerVerifyRow, gemspecVerifyRow} {
 		rowViolations, err := s.verifyEcosystem(req, merged, row)
 		if err != nil {
 			return nil, err
@@ -466,6 +475,14 @@ var composerVerifyRow = ecosystemVerifyRow{
 	manifestName: ecosystem.ComposerManifestName,
 	label:        "composer",
 	findings:     composerFindings,
+}
+
+var gemspecVerifyRow = ecosystemVerifyRow{
+	language:    ecosystem.RubyLanguage,
+	label:       "gemspec",
+	missingHint: "*.gemspec",
+	findings:    gemspecFindings,
+	discover:    ecosystem.GemspecManifestNames,
 }
 
 // verifyEcosystem proves one declared ecosystem surface fail-closed in both
@@ -768,6 +785,30 @@ func composerFindings(_ string, content, manifestPath string, merged map[string]
 		violations = append(violations, "composer license field carries multiple license entries: "+manifestPath+" (the resolution is an explicit tenant decision)")
 	case surface.Value != target:
 		violations = append(violations, "composer license field diverges from the lock projection: observed \""+surface.Value+"\", expected \""+target+"\" (run the render to align)")
+	}
+	return violations
+}
+
+// gemspecFindings derives the Ruby license-surface findings from the
+// inspected gemspec and the lock projection: the declared assignment (the
+// singular string form or the value-equal plural spelling), its entry, and
+// the fail-closed proof state.
+func gemspecFindings(_ string, content, manifestPath string, merged map[string]string) []string {
+	target := ecosystem.GemspecProjection(merged)
+	surface, err := ecosystem.InspectGemspecLicense(content)
+	if err != nil {
+		return []string{"gemspec license surface cannot be proven: " + manifestPath + " (" + err.Error() + ")"}
+	}
+	violations := []string{}
+	switch {
+	case surface.State == ecosystem.GemspecLicenseMissing:
+		violations = append(violations, "gemspec license field is missing: "+manifestPath+" (expected \""+target+"\")")
+	case surface.State == ecosystem.GemspecLicenseInvalid:
+		violations = append(violations, "gemspec license field is not a license expression string or array: "+manifestPath+" (expected \""+target+"\")")
+	case surface.State == ecosystem.GemspecLicenseArray && len(surface.Entries) > 1:
+		violations = append(violations, "gemspec license field carries multiple license entries: "+manifestPath+" (the resolution is an explicit tenant decision)")
+	case surface.Value != target:
+		violations = append(violations, "gemspec license field diverges from the lock projection: observed \""+surface.Value+"\", expected \""+target+"\" (run the render to align)")
 	}
 	return violations
 }
