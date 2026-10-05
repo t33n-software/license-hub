@@ -182,20 +182,20 @@ func AlignPythonLicense(content, target string, files []string) (string, bool, e
 	if surface == nil {
 		return "", false, ErrNoProjectTable
 	}
-	edits := []tomlEdit{}
+	edits := []spanEdit{}
 	switch {
 	case surface.license == nil:
 		// The insertion cases below carry the license field.
 	case surface.license.kind == tomlValueString:
 		if surface.license.str != target {
-			edits = append(edits, tomlEdit{
+			edits = append(edits, spanEdit{
 				start: surface.license.valueStart,
 				end:   surface.license.valueEnd,
 				text:  tomlQuote(target),
 			})
 		}
 	case surface.license.kind == tomlValueInlineTable:
-		edits = append(edits, tomlEdit{
+		edits = append(edits, spanEdit{
 			start: surface.license.valueStart,
 			end:   surface.license.valueEnd,
 			text:  tomlQuote(target),
@@ -217,7 +217,7 @@ func AlignPythonLicense(content, target string, files []string) (string, bool, e
 			observed = append(observed, item.decoded)
 		}
 		if !slices.Equal(observed, files) {
-			edits = append(edits, tomlEdit{
+			edits = append(edits, spanEdit{
 				start: surface.licenseFiles.valueStart,
 				end:   surface.licenseFiles.valueEnd,
 				text:  tomlStringArray(files),
@@ -226,19 +226,19 @@ func AlignPythonLicense(content, target string, files []string) (string, bool, e
 	}
 	switch {
 	case surface.license == nil && surface.licenseFiles == nil:
-		edits = append(edits, tomlLineInsertion(content, surface.headerEnd,
+		edits = append(edits, spanLineInsertion(content, surface.headerEnd,
 			"license = "+tomlQuote(target)+"\nlicense-files = "+tomlStringArray(files)+"\n"))
 	case surface.license == nil:
-		edits = append(edits, tomlLineInsertion(content, surface.headerEnd,
+		edits = append(edits, spanLineInsertion(content, surface.headerEnd,
 			"license = "+tomlQuote(target)+"\n"))
 	case surface.licenseFiles == nil:
-		edits = append(edits, tomlLineInsertion(content, surface.license.lineEnd,
+		edits = append(edits, spanLineInsertion(content, surface.license.lineEnd,
 			"license-files = "+tomlStringArray(files)+"\n"))
 	}
 	if len(edits) == 0 {
 		return content, false, nil
 	}
-	return applyTOMLEdits(content, edits), true, nil
+	return applySpanEdits(content, edits), true, nil
 }
 
 type pythonProjectSurface struct {

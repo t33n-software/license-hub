@@ -25,7 +25,9 @@ type.
    field `license-files` as the glob list); `rust` selects the Cargo.toml
    surface (the mutually exclusive `[package]` keys `license`, an SPDX 2.3
    expression, and `license-file`, the path to the license text inside the
-   package); Go selects no manifest field —
+   package); `maven` selects the pom.xml surface (the project-level
+   `licenses` element: every `license` element carries `name` and `url`);
+   Go selects no manifest field —
    the `LICENSE` file at the module root is the truth surface, and the
    adapter aligns nothing. Additional rows are grown content-driven when a
    consuming surface exists, with the field semantics verified against the
@@ -103,7 +105,31 @@ that would create or shadow the license surface outside the canonical table
 key, and any root-level declaration of the package name) are refused for
 the same reason.
 
-## 5. Render alignment discipline
+## 5. The Maven alignment contract
+
+The Maven row targets `pom.xml`. The project-level `licenses` element is
+the license surface; every `license` element carries the `name` of the
+license and the `url` of its text (plus the optional `distribution` and
+`comments` elements; an SPDX identifier as the `name` is the recommended
+form; child poms inherit the declared licenses). The bound organization
+projection: the `name` carries a declared `SPDX_LICENSE_IDENTIFIER` itself,
+and the file-based custom family carries the LICENSE_ID form; the `url`
+carries the tenant `CANONICAL_SOURCE_URL`. A manifest that declares
+multiple `license` elements is refused fail-closed — the projection carries
+exactly one license family, and the resolution is an explicit tenant
+decision.
+
+The adapter's scanner reads the pom skeleton through the standard XML
+decoder: the decoder validates the well-formedness fail-closed, and its
+input-offset contract tiles every byte to a token, so every alignment span
+is exact. A malformed manifest refuses the whole surface fail-closed; a
+duplicate `licenses`, `name`, or `url` element is refused for the same
+reason. The alignment inserts the missing `licenses` block after the
+project start tag, inserts the missing `license` or name/url children
+deterministically, and replaces only the char-data spans of diverging
+values.
+
+## 6. Render alignment discipline
 
 The render is the sanctioned writer of tenant license surfaces, and the same
 governed act aligns the ecosystem license fields. Four disciplines bind
@@ -126,7 +152,7 @@ manifest is absent, and the dry-run plan previews the alignment without
 writing. A non-string license member or an unscannable manifest is refused
 fail-closed instead of being rewritten.
 
-## 6. Verification finding classes
+## 7. Verification finding classes
 
 Verification is fail-closed in both directions and yields exactly three
 finding classes:
@@ -146,9 +172,9 @@ finding classes:
 A diverging field is never adopted from the manifest into the lock; the
 correction direction is always lock → manifest through the render.
 
-## 7. Adapter set and growth rule
+## 8. Adapter set and growth rule
 
-The npm, Python, and Rust adapters are implemented. Every additional
+The npm, Python, Rust, and Maven adapters are implemented. Every additional
 ecosystem adapter is born content-driven when a consuming project surface
 exists, and its matrix row records either the canonical field semantics
 (verified against the official ecosystem documentation at specification
@@ -156,7 +182,7 @@ time) or the explicit verdict that the ecosystem carries no manifest
 field — for those rows the file family is the declared truth and the
 adapter aligns nothing.
 
-## 8. Do / Don't
+## 9. Do / Don't
 
 **Do:** derive every expected field value from the lock through the matrix
 row; prove declaration, manifest, and field fail-closed in both directions;

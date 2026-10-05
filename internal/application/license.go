@@ -83,6 +83,7 @@ type preparedRender struct {
 	npm      *ecosystemAlignment
 	python   *ecosystemAlignment
 	cargo    *ecosystemAlignment
+	maven    *ecosystemAlignment
 }
 
 // ecosystemAlignment carries the prepared ecosystem license-field alignment
@@ -132,6 +133,15 @@ var cargoRenderRow = ecosystemRenderRow{
 	},
 }
 
+var mavenRenderRow = ecosystemRenderRow{
+	language:      ecosystem.MavenLanguage,
+	manifestName:  ecosystem.MavenManifestName,
+	manifestLabel: "maven manifest",
+	align: func(content string, merged map[string]string) (string, bool, error) {
+		return ecosystem.AlignMavenLicense(content, ecosystem.MavenProjection(merged))
+	},
+}
+
 // prepare reads and validates every input of a render without writing
 // anything.
 func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
@@ -159,6 +169,10 @@ func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
 	if err != nil {
 		return preparedRender{}, err
 	}
+	maven, err := s.prepareEcosystemAlignment(req, merged, mavenRenderRow)
+	if err != nil {
+		return preparedRender{}, err
+	}
 	return preparedRender{
 		content:  content,
 		template: template,
@@ -166,6 +180,7 @@ func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
 		npm:      npm,
 		python:   python,
 		cargo:    cargo,
+		maven:    maven,
 	}, nil
 }
 
@@ -183,7 +198,7 @@ func (s *LicenseService) Render(req RenderRequest) (RenderResult, error) {
 		}
 	}
 	result := RenderResult{Written: prepared.targets, Digest: digest.SHA256(prepared.template)}
-	for _, alignment := range []*ecosystemAlignment{prepared.npm, prepared.python, prepared.cargo} {
+	for _, alignment := range []*ecosystemAlignment{prepared.npm, prepared.python, prepared.cargo, prepared.maven} {
 		if err := s.writeAlignment(alignment, &result); err != nil {
 			return RenderResult{}, err
 		}
@@ -230,7 +245,7 @@ func (s *LicenseService) PlanRender(req RenderRequest) (PlanResult, error) {
 		return PlanResult{}, err
 	}
 	plan := PlanResult{Targets: prepared.targets, Digest: digest.SHA256(prepared.template)}
-	for _, alignment := range []*ecosystemAlignment{prepared.npm, prepared.python, prepared.cargo} {
+	for _, alignment := range []*ecosystemAlignment{prepared.npm, prepared.python, prepared.cargo, prepared.maven} {
 		planAlignment(alignment, &plan)
 	}
 	return plan, nil
@@ -294,7 +309,7 @@ func (s *LicenseService) Verify(req VerifyRequest) ([]string, error) {
 			violations = append(violations, "rendered file drifted from canonical render: "+target)
 		}
 	}
-	for _, row := range []ecosystemVerifyRow{npmVerifyRow, pythonVerifyRow, cargoVerifyRow} {
+	for _, row := range []ecosystemVerifyRow{npmVerifyRow, pythonVerifyRow, cargoVerifyRow, mavenVerifyRow} {
 		rowViolations, err := s.verifyEcosystem(req, merged, row)
 		if err != nil {
 			return nil, err
@@ -382,6 +397,13 @@ var cargoVerifyRow = ecosystemVerifyRow{
 	manifestName: ecosystem.CargoManifestName,
 	label:        "cargo",
 	findings:     cargoFindings,
+}
+
+var mavenVerifyRow = ecosystemVerifyRow{
+	language:     ecosystem.MavenLanguage,
+	manifestName: ecosystem.MavenManifestName,
+	label:        "maven",
+	findings:     mavenFindings,
 }
 
 // verifyEcosystem proves one declared ecosystem surface fail-closed in both
@@ -518,6 +540,33 @@ func cargoFindings(content, manifestPath string, merged map[string]string) []str
 		if form.Field != ecosystem.CargoLicenseFileKey || surface.Value != form.Value {
 			violations = append(violations, "cargo license field diverges from the lock projection: observed "+ecosystem.CargoLicenseFileKey+" = \""+surface.Value+"\", expected "+form.String()+" (run the render to align)")
 		}
+	}
+	return violations
+}
+
+// mavenFindings derives the Maven license-surface findings from the
+// inspected manifest and the lock projection: the licenses element, its
+// license count, and the name and url values of the first license element.
+func mavenFindings(content, manifestPath string, merged map[string]string) []string {
+	form := ecosystem.MavenProjection(merged)
+	surface, err := ecosystem.InspectMavenLicense(content)
+	if err != nil {
+		return []string{"maven license surface cannot be proven: " + manifestPath + " (" + err.Error() + ")"}
+	}
+	violations := []string{}
+	switch {
+	case !surface.LicensesPresent:
+		violations = append(violations, "maven licenses element is missing: "+manifestPath+" (expected <name> \""+form.Name+"\" and <url> \""+form.URL+"\")")
+	case surface.LicenseCount > 1:
+		violations = append(violations, "maven licenses element carries multiple license elements: "+manifestPath+" (the resolution is an explicit tenant decision)")
+	case !surface.NamePresent:
+		violations = append(violations, "maven license name element is missing: "+manifestPath+" (expected \""+form.Name+"\")")
+	case surface.Name != form.Name:
+		violations = append(violations, "maven license name diverges from the lock projection: observed \""+surface.Name+"\", expected \""+form.Name+"\" (run the render to align)")
+	case !surface.URLPresent:
+		violations = append(violations, "maven license url element is missing: "+manifestPath+" (expected \""+form.URL+"\")")
+	case surface.URL != form.URL:
+		violations = append(violations, "maven license url diverges from the lock projection: observed \""+surface.URL+"\", expected \""+form.URL+"\" (run the render to align)")
 	}
 	return violations
 }
