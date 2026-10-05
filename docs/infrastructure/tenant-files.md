@@ -85,6 +85,7 @@ fields the render aligns to the lock projection:
 | `rust` | `Cargo.toml` | `[package]` `license-file` → `"LICENSE"` (or `[package]` `license` → the declared SPDX identifier) |
 | `maven` | `pom.xml` | `licenses`/`license` `name` → the LICENSE_ID form (or the declared SPDX identifier), `url` → the canonical source URL |
 | `nuget` | `*.nuspec` / `*.csproj` | `<license type="expression">` → the declared SPDX identifier, `<license type="file">` → `LICENSE` (the custom family); MSBuild: `PackageLicenseExpression` / `PackageLicenseFile` (discovered in the render target directory) |
+| `composer` | `composer.json` | `license` → `LicenseRef-<LICENSE_ID>` (or the declared SPDX identifier) |
 
 Manifest license fields are never hand-edited: the verify lane fails closed
 on diverging fields, and the render is the sanctioned writer. Deprecated
@@ -95,4 +96,5 @@ is an explicit tenant decision. The cargo license keys are mutually
 exclusive (`license` in lieu of `license-file`); a manifest that declares
 both keys is a fail-closed finding whose resolution is an explicit tenant
 decision. A pom that declares multiple `license` elements is the same
-class of finding.
+class of finding, and a composer license array that declares multiple
+expressions is the same class of finding.

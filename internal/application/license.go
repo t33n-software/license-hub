@@ -153,6 +153,15 @@ var nugetRenderRow = ecosystemRenderRow{
 	discover: ecosystem.NuGetManifestNames,
 }
 
+var composerRenderRow = ecosystemRenderRow{
+	language:      ecosystem.ComposerLanguage,
+	manifestName:  ecosystem.ComposerManifestName,
+	manifestLabel: "composer manifest",
+	align: func(_ string, content string, merged map[string]string) (string, bool, error) {
+		return ecosystem.AlignComposerLicense(content, ecosystem.ComposerProjection(merged))
+	},
+}
+
 // prepare reads and validates every input of a render without writing
 // anything.
 func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
@@ -173,7 +182,7 @@ func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
 		template: template,
 		targets:  instancePaths(req.OutDir, merged),
 	}
-	for _, row := range []ecosystemRenderRow{npmRenderRow, pythonRenderRow, cargoRenderRow, mavenRenderRow, nugetRenderRow} {
+	for _, row := range []ecosystemRenderRow{npmRenderRow, pythonRenderRow, cargoRenderRow, mavenRenderRow, nugetRenderRow, composerRenderRow} {
 		alignments, err := s.prepareEcosystemAlignment(req, merged, row)
 		if err != nil {
 			return preparedRender{}, err
@@ -308,7 +317,7 @@ func (s *LicenseService) Verify(req VerifyRequest) ([]string, error) {
 			violations = append(violations, "rendered file drifted from canonical render: "+target)
 		}
 	}
-	for _, row := range []ecosystemVerifyRow{npmVerifyRow, pythonVerifyRow, cargoVerifyRow, mavenVerifyRow, nugetVerifyRow} {
+	for _, row := range []ecosystemVerifyRow{npmVerifyRow, pythonVerifyRow, cargoVerifyRow, mavenVerifyRow, nugetVerifyRow, composerVerifyRow} {
 		rowViolations, err := s.verifyEcosystem(req, merged, row)
 		if err != nil {
 			return nil, err
@@ -450,6 +459,13 @@ var nugetVerifyRow = ecosystemVerifyRow{
 	missingHint: "*.csproj or *.nuspec",
 	findings:    nugetFindings,
 	discover:    ecosystem.NuGetManifestNames,
+}
+
+var composerVerifyRow = ecosystemVerifyRow{
+	language:     ecosystem.ComposerLanguage,
+	manifestName: ecosystem.ComposerManifestName,
+	label:        "composer",
+	findings:     composerFindings,
 }
 
 // verifyEcosystem proves one declared ecosystem surface fail-closed in both
@@ -728,6 +744,30 @@ func msBuildFindings(surface ecosystem.NuGetSurface, manifestPath string, form e
 	}
 	if surface.DeprecatedURLPresent {
 		violations = append(violations, "msbuild manifest carries the deprecated PackageLicenseUrl property: "+manifestPath+" (removal is an explicit tenant decision)")
+	}
+	return violations
+}
+
+// composerFindings derives the Composer license-surface findings from the
+// inspected manifest and the lock projection: the declared form (the string
+// expression or the one-element array spelling), its value, and the
+// fail-closed proof state.
+func composerFindings(_ string, content, manifestPath string, merged map[string]string) []string {
+	target := ecosystem.ComposerProjection(merged)
+	surface, err := ecosystem.InspectComposerLicense(content)
+	if err != nil {
+		return []string{"composer license surface cannot be proven: " + manifestPath + " (" + err.Error() + ")"}
+	}
+	violations := []string{}
+	switch {
+	case surface.State == ecosystem.ComposerLicenseMissing:
+		violations = append(violations, "composer license field is missing: "+manifestPath+" (expected \""+target+"\")")
+	case surface.State == ecosystem.ComposerLicenseInvalid:
+		violations = append(violations, "composer license field is not a license expression string or array: "+manifestPath+" (expected \""+target+"\")")
+	case surface.State == ecosystem.ComposerLicenseArray && len(surface.Entries) > 1:
+		violations = append(violations, "composer license field carries multiple license entries: "+manifestPath+" (the resolution is an explicit tenant decision)")
+	case surface.Value != target:
+		violations = append(violations, "composer license field diverges from the lock projection: observed \""+surface.Value+"\", expected \""+target+"\" (run the render to align)")
 	}
 	return violations
 }
