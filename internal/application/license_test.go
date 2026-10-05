@@ -2934,3 +2934,382 @@ func TestVerifyElixirCleanWithoutElixirSurfaces(t *testing.T) {
 		t.Fatalf("Verify() violations = %v", violations)
 	}
 }
+
+// --- Haskell ecosystem surfaces ---
+
+const haskellSeam = `{"schemaVersion":4,"toolchain":{"language":"haskell","version":"9.10.0"}}`
+
+const exampleCabal = "cabal-version:      2.2\n" +
+	"name:               example\n" +
+	"version:            0.1.0\n" +
+	"license:            MIT\n" +
+	"\n" +
+	"library\n" +
+	"    exposed-modules:  Example\n" +
+	"    build-depends:    base >= 4 && < 5\n"
+
+const alignedCabal = "cabal-version:      2.2\n" +
+	"license-file: LICENSE\n" +
+	"name:               example\n" +
+	"version:            0.1.0\n" +
+	"license:            LicenseRef-license-hub-NoRepublish-1.0\n" +
+	"\n" +
+	"library\n" +
+	"    exposed-modules:  Example\n" +
+	"    build-depends:    base >= 4 && < 5\n"
+
+var cabalManifestPath = filepath.Join("out", "example.cabal")
+
+func seedCabalSurface(f *fakeFS, seam, name, manifest string) {
+	if seam != "" {
+		f.files[seamPath] = []byte(seam)
+	}
+	if manifest != "" {
+		f.files[filepath.Join("out", name)] = []byte(manifest)
+	}
+}
+
+func TestRenderAlignsTheDeclaredCabalSurface(t *testing.T) {
+	f := seededFS(t)
+	seedCabalSurface(f, haskellSeam, "example.cabal", exampleCabal)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !slices.Equal(result.Aligned, []string{cabalManifestPath}) {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	if len(result.Skipped) != 0 {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+	content := string(f.files[cabalManifestPath])
+	if !strings.Contains(content, "license:            LicenseRef-license-hub-NoRepublish-1.0") {
+		t.Fatalf("Render() manifest = %q", content)
+	}
+	if !strings.Contains(content, "license-file: LICENSE") {
+		t.Fatalf("Render() manifest = %q", content)
+	}
+	if !strings.Contains(content, "build-depends:    base >= 4 && < 5") {
+		t.Fatalf("Render() touched a non-license field: %q", content)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderCabalAlignmentIsIdempotent(t *testing.T) {
+	f := seededFS(t)
+	seedCabalSurface(f, haskellSeam, "example.cabal", alignedCabal)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+}
+
+func TestRenderCabalListSpellingIsAlignedWithoutChange(t *testing.T) {
+	manifest := "license: LicenseRef-license-hub-NoRepublish-1.0\nlicense-files: LICENSE\n"
+	f := seededFS(t)
+	seedCabalSurface(f, haskellSeam, "example.cabal", manifest)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+	if string(f.files[cabalManifestPath]) != manifest {
+		t.Fatalf("Render() mutated the value-equal spelling: %q", f.files[cabalManifestPath])
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderCabalMissingFileFieldIsInserted(t *testing.T) {
+	manifest := "cabal-version: 2.2\nlicense: LicenseRef-license-hub-NoRepublish-1.0\n"
+	f := seededFS(t)
+	seedCabalSurface(f, haskellSeam, "example.cabal", manifest)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !slices.Equal(result.Aligned, []string{cabalManifestPath}) {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	content := string(f.files[cabalManifestPath])
+	if !strings.Contains(content, "license-file: LICENSE") {
+		t.Fatalf("Render() manifest = %q", content)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestPlanRenderPreviewsTheCabalAlignment(t *testing.T) {
+	f := seededFS(t)
+	seedCabalSurface(f, haskellSeam, "example.cabal", exampleCabal)
+	service := NewLicenseService(f)
+	plan, err := service.PlanRender(renderRequest())
+	if err != nil {
+		t.Fatalf("PlanRender() error = %v", err)
+	}
+	if len(plan.Alignments) != 1 || !strings.Contains(plan.Alignments[0], cabalManifestPath) {
+		t.Fatalf("PlanRender() alignments = %v", plan.Alignments)
+	}
+	if string(f.files[cabalManifestPath]) != exampleCabal {
+		t.Fatalf("PlanRender() mutated the manifest: %q", f.files[cabalManifestPath])
+	}
+}
+
+func TestRenderSkipsTheAbsentDeclaredCabalManifest(t *testing.T) {
+	f := seededFS(t)
+	seedCabalSurface(f, haskellSeam, "", "")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	if len(result.Skipped) != 1 || !strings.Contains(result.Skipped[0], "absent") {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "manifest missing") {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderWithoutDeclarationLeavesCabalSurfacesUntouched(t *testing.T) {
+	f := seededFS(t)
+	seedCabalSurface(f, "", "example.cabal", exampleCabal)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+}
+
+func TestRenderWithNonHaskellDeclarationLeavesCabalSurfacesUntouched(t *testing.T) {
+	f := seededFS(t)
+	seedCabalSurface(f, goSeam, "example.cabal", exampleCabal)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "without covering declaration") {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderRejectsAnInvalidCabalSurface(t *testing.T) {
+	cases := []struct {
+		name     string
+		seam     string
+		manifest string
+	}{
+		{"invalid seam", "{", ""},
+		{"invalid manifest", haskellSeam, "license: \"MIT\n"},
+		{"both file forms", haskellSeam, "license: MIT\nlicense-file: LICENSE\nlicense-files: LICENSE\n"},
+		{"multiple file entries", haskellSeam, "license: MIT\nlicense-files: LICENSE NOTICE\n"},
+		{"license surface in a section", haskellSeam, "library\n  license: MIT\n"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedCabalSurface(f, testCase.seam, "example.cabal", testCase.manifest)
+			service := NewLicenseService(f)
+			_, err := service.Render(renderRequest())
+			if !errors.Is(err, ErrInvalidEcosystemSurface) {
+				t.Fatalf("Render() error = %v, want ErrInvalidEcosystemSurface", err)
+			}
+		})
+	}
+}
+
+func TestRenderReportsCabalReadFailures(t *testing.T) {
+	cases := []struct {
+		name    string
+		blocked string
+		wantIs  error
+		wantErr string
+	}{
+		{"seam read failure", seamPath, os.ErrPermission, "read ecosystem declaration"},
+		{"manifest read failure", cabalManifestPath, os.ErrPermission, "read cabal manifest"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedCabalSurface(f, haskellSeam, "example.cabal", exampleCabal)
+			f.readErr[testCase.blocked] = testCase.wantIs
+			service := NewLicenseService(f)
+			_, err := service.Render(renderRequest())
+			if !errors.Is(err, testCase.wantIs) || !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Fatalf("Render() error = %v, want %v with %q", err, testCase.wantIs, testCase.wantErr)
+			}
+		})
+	}
+}
+
+func TestRenderReportsCabalListingFailure(t *testing.T) {
+	f := seededFS(t)
+	seedCabalSurface(f, haskellSeam, "", "")
+	f.listErr["out"] = os.ErrPermission
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("Render() error = %v, want os.ErrPermission", err)
+	}
+}
+
+func TestRenderCabalToleratesAMissingTargetDirectoryListing(t *testing.T) {
+	f := seededFS(t)
+	seedCabalSurface(f, haskellSeam, "", "")
+	f.listErr["out"] = os.ErrNotExist
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Skipped) != 1 || !strings.Contains(result.Skipped[0], "absent") {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+}
+
+func TestRenderCabalAlignWriteError(t *testing.T) {
+	f := seededFS(t)
+	seedCabalSurface(f, haskellSeam, "example.cabal", exampleCabal)
+	f.writeErr[cabalManifestPath] = fmt.Errorf("disk full")
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); err == nil {
+		t.Fatal("Render() expected cabal manifest write error")
+	}
+}
+
+func TestPlanRenderSkipsTheAbsentDeclaredCabalManifest(t *testing.T) {
+	f := seededFS(t)
+	seedCabalSurface(f, haskellSeam, "", "")
+	service := NewLicenseService(f)
+	plan, err := service.PlanRender(renderRequest())
+	if err != nil {
+		t.Fatalf("PlanRender() error = %v", err)
+	}
+	if len(plan.Skips) != 1 || !strings.Contains(plan.Skips[0], "absent") {
+		t.Fatalf("PlanRender() skips = %v", plan.Skips)
+	}
+	if len(plan.Alignments) != 0 {
+		t.Fatalf("PlanRender() alignments = %v", plan.Alignments)
+	}
+}
+
+func TestVerifyCabalFindingsFailClosed(t *testing.T) {
+	cases := []struct {
+		name         string
+		seam         string
+		manifestName string
+		manifest     string
+		want         string
+	}{
+		{"diverging field", haskellSeam, "example.cabal", exampleCabal, "diverges from the lock projection"},
+		{"missing license field", haskellSeam, "example.cabal", "cabal-version: 2.2\nname: x\n", "license field is missing"},
+		{"empty license field", haskellSeam, "example.cabal", "license:\nname: x\n", "license field is empty"},
+		{"diverging license-file", haskellSeam, "example.cabal", "license: LicenseRef-license-hub-NoRepublish-1.0\nlicense-file: COPYING\n", "license-file field diverges"},
+		{"multiple file entries", haskellSeam, "example.cabal", "license: LicenseRef-license-hub-NoRepublish-1.0\nlicense-files: LICENSE NOTICE\n", "multiple license file entries"},
+		{"diverging list entry", haskellSeam, "example.cabal", "license: LicenseRef-license-hub-NoRepublish-1.0\nlicense-files: COPYING\n", "license-files field diverges"},
+		{"both file forms", haskellSeam, "example.cabal", "license-file: LICENSE\nlicense-files: LICENSE\n", "cannot be proven"},
+		{"empty license-files", haskellSeam, "example.cabal", "license: LicenseRef-license-hub-NoRepublish-1.0\nlicense-files:\n", "license-file field is empty"},
+		{"unscannable manifest", haskellSeam, "example.cabal", "license: \"MIT\n", "cannot be proven"},
+		{"license surface in a section", haskellSeam, "example.cabal", "library\n  license: MIT\n", "cannot be proven"},
+		{"shadow without declaration", "", "example.cabal", exampleCabal, "without covering declaration"},
+		{"shadow with other language", goSeam, "example.cabal", exampleCabal, "without covering declaration"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedCabalSurface(f, testCase.seam, testCase.manifestName, testCase.manifest)
+			service := NewLicenseService(f)
+			violations, err := service.Verify(verifyRequest(""))
+			if err != nil {
+				t.Fatalf("Verify() error = %v", err)
+			}
+			found := false
+			for _, violation := range violations {
+				if strings.Contains(violation, testCase.want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("Verify() violations = %v, want %q", violations, testCase.want)
+			}
+		})
+	}
+}
+
+func TestVerifyReportsCabalListingFailure(t *testing.T) {
+	f := seededFS(t)
+	seedCabalSurface(f, haskellSeam, "", "")
+	f.listErr["out"] = os.ErrPermission
+	service := NewLicenseService(f)
+	if _, err := service.Verify(verifyRequest("")); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("Verify() error = %v, want os.ErrPermission", err)
+	}
+}
+
+func TestVerifyReportsCabalManifestReadFailure(t *testing.T) {
+	f := seededFS(t)
+	seedCabalSurface(f, haskellSeam, "example.cabal", exampleCabal)
+	f.readErr[cabalManifestPath] = os.ErrPermission
+	service := NewLicenseService(f)
+	if _, err := service.Verify(verifyRequest("")); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("Verify() error = %v, want os.ErrPermission", err)
+	}
+}
+
+func TestVerifyCabalCleanWithoutCabalSurfaces(t *testing.T) {
+	f := seededFS(t)
+	seedCabalSurface(f, goSeam, "", "")
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}

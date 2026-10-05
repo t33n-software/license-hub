@@ -88,6 +88,7 @@ fields the render aligns to the lock projection:
 | `composer` | `composer.json` | `license` → `LicenseRef-<LICENSE_ID>` (or the declared SPDX identifier) |
 | `ruby` | `*.gemspec` | `spec.license` → `LicenseRef-<LICENSE_ID>` (or the declared SPDX identifier); the plural `spec.licenses = [<entry>]` spelling is the value-equal alternative (discovered in the render target directory) |
 | `elixir` | `mix.exs` | `package` keyword list `licenses` → `["LicenseRef-<LICENSE_ID>"]` (or the declared SPDX identifier); the insertion anchors at the package keyword list |
+| `haskell` | `*.cabal` | top-level `license` → `LicenseRef-<LICENSE_ID>` (or the declared SPDX identifier), `license-file` → `LICENSE`; the `license-files` list spelling with exactly `LICENSE` is the value-equal alternative (discovered in the render target directory) |
 
 Manifest license fields are never hand-edited: the verify lane fails closed
 on diverging fields, and the render is the sanctioned writer. Deprecated
@@ -104,4 +105,8 @@ array that declares multiple entries or a gemspec that declares the
 license assignment more than once. A mix.exs whose `licenses` entry
 declares multiple identifiers, whose package configuration or licenses
 entry is declared more than once, or whose licenses entry lives outside
-the package keyword list is the same class of finding.
+the package keyword list is the same class of finding. A .cabal that
+declares multiple license file entries, that declares the license field or
+the file surface more than once, or that carries a license surface inside
+a component section instead of the top-level package description is the
+same class of finding.

@@ -77,6 +77,11 @@
         "package": "./internal/domain/ecosystem",
         "target": "FuzzAlignElixirLicense",
         "time": "50000x"
+      },
+      {
+        "package": "./internal/domain/ecosystem",
+        "target": "FuzzAlignCabalLicense",
+        "time": "50000x"
       }
     ]
   }
