@@ -2648,3 +2648,289 @@ func TestVerifyGemspecCleanWithoutGemspecSurfaces(t *testing.T) {
 		t.Fatalf("Verify() violations = %v", violations)
 	}
 }
+
+// --- Elixir ecosystem surfaces ---
+
+const elixirSeam = `{"schemaVersion":4,"toolchain":{"language":"elixir","version":"1.17.0"}}`
+
+const exampleMixExs = "defmodule Example.MixProject do\n" +
+	"  use Mix.Project\n\n" +
+	"  def project do\n" +
+	"    [\n" +
+	"      app: :example_project,\n" +
+	"      version: \"0.1.0\",\n" +
+	"      package: [\n" +
+	"        name: :example_project,\n" +
+	"        licenses: [\"MIT\"]\n" +
+	"      ]\n" +
+	"    ]\n" +
+	"  end\n" +
+	"end\n"
+
+const alignedMixExs = "defmodule Example.MixProject do\n" +
+	"  use Mix.Project\n\n" +
+	"  def project do\n" +
+	"    [\n" +
+	"      app: :example_project,\n" +
+	"      version: \"0.1.0\",\n" +
+	"      package: [\n" +
+	"        name: :example_project,\n" +
+	"        licenses: [\"LicenseRef-license-hub-NoRepublish-1.0\"]\n" +
+	"      ]\n" +
+	"    ]\n" +
+	"  end\n" +
+	"end\n"
+
+var mixManifestPath = filepath.Join("out", "mix.exs")
+
+func seedElixirSurface(f *fakeFS, seam, manifest string) {
+	if seam != "" {
+		f.files[seamPath] = []byte(seam)
+	}
+	if manifest != "" {
+		f.files[mixManifestPath] = []byte(manifest)
+	}
+}
+
+func TestRenderAlignsTheDeclaredElixirSurface(t *testing.T) {
+	f := seededFS(t)
+	seedElixirSurface(f, elixirSeam, exampleMixExs)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !slices.Equal(result.Aligned, []string{mixManifestPath}) {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	if len(result.Skipped) != 0 {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+	content := string(f.files[mixManifestPath])
+	if !strings.Contains(content, `licenses: ["LicenseRef-license-hub-NoRepublish-1.0"]`) {
+		t.Fatalf("Render() manifest = %q", content)
+	}
+	if !strings.Contains(content, "app: :example_project") {
+		t.Fatalf("Render() touched a non-license entry: %q", content)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderElixirAlignmentIsIdempotent(t *testing.T) {
+	f := seededFS(t)
+	seedElixirSurface(f, elixirSeam, alignedMixExs)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+}
+
+func TestPlanRenderPreviewsTheElixirAlignment(t *testing.T) {
+	f := seededFS(t)
+	seedElixirSurface(f, elixirSeam, exampleMixExs)
+	service := NewLicenseService(f)
+	plan, err := service.PlanRender(renderRequest())
+	if err != nil {
+		t.Fatalf("PlanRender() error = %v", err)
+	}
+	if len(plan.Alignments) != 1 || !strings.Contains(plan.Alignments[0], mixManifestPath) {
+		t.Fatalf("PlanRender() alignments = %v", plan.Alignments)
+	}
+	if string(f.files[mixManifestPath]) != exampleMixExs {
+		t.Fatalf("PlanRender() mutated the manifest: %q", f.files[mixManifestPath])
+	}
+}
+
+func TestRenderSkipsTheAbsentDeclaredElixirManifest(t *testing.T) {
+	f := seededFS(t)
+	seedElixirSurface(f, elixirSeam, "")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	if len(result.Skipped) != 1 || !strings.Contains(result.Skipped[0], "absent") {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "manifest missing") {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderWithoutDeclarationLeavesElixirSurfacesUntouched(t *testing.T) {
+	f := seededFS(t)
+	seedElixirSurface(f, "", exampleMixExs)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+}
+
+func TestRenderWithNonElixirDeclarationLeavesElixirSurfacesUntouched(t *testing.T) {
+	f := seededFS(t)
+	seedElixirSurface(f, goSeam, exampleMixExs)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "without covering declaration") {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderRejectsAnInvalidElixirSurface(t *testing.T) {
+	cases := []struct {
+		name     string
+		seam     string
+		manifest string
+	}{
+		{"invalid seam", "{", ""},
+		{"invalid manifest", elixirSeam, "def project do\n  [package: [licenses: [\"MIT\"]]\nend\n"},
+		{"multiple entries", elixirSeam, "def project do\n  [package: [licenses: [\"MIT\", \"Apache-2.0\"]]]\nend\n"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedElixirSurface(f, testCase.seam, testCase.manifest)
+			service := NewLicenseService(f)
+			_, err := service.Render(renderRequest())
+			if !errors.Is(err, ErrInvalidEcosystemSurface) {
+				t.Fatalf("Render() error = %v, want ErrInvalidEcosystemSurface", err)
+			}
+		})
+	}
+}
+
+func TestRenderReportsElixirReadFailures(t *testing.T) {
+	cases := []struct {
+		name    string
+		blocked string
+		wantIs  error
+		wantErr string
+	}{
+		{"seam read failure", seamPath, os.ErrPermission, "read ecosystem declaration"},
+		{"manifest read failure", mixManifestPath, os.ErrPermission, "read elixir manifest"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedElixirSurface(f, elixirSeam, exampleMixExs)
+			f.readErr[testCase.blocked] = testCase.wantIs
+			service := NewLicenseService(f)
+			_, err := service.Render(renderRequest())
+			if !errors.Is(err, testCase.wantIs) || !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Fatalf("Render() error = %v, want %v with %q", err, testCase.wantIs, testCase.wantErr)
+			}
+		})
+	}
+}
+
+func TestRenderElixirAlignWriteError(t *testing.T) {
+	f := seededFS(t)
+	seedElixirSurface(f, elixirSeam, exampleMixExs)
+	f.writeErr[mixManifestPath] = fmt.Errorf("disk full")
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); err == nil {
+		t.Fatal("Render() expected elixir manifest write error")
+	}
+}
+
+func TestPlanRenderSkipsTheAbsentDeclaredElixirManifest(t *testing.T) {
+	f := seededFS(t)
+	seedElixirSurface(f, elixirSeam, "")
+	service := NewLicenseService(f)
+	plan, err := service.PlanRender(renderRequest())
+	if err != nil {
+		t.Fatalf("PlanRender() error = %v", err)
+	}
+	if len(plan.Skips) != 1 || !strings.Contains(plan.Skips[0], "absent") {
+		t.Fatalf("PlanRender() skips = %v", plan.Skips)
+	}
+	if len(plan.Alignments) != 0 {
+		t.Fatalf("PlanRender() alignments = %v", plan.Alignments)
+	}
+}
+
+func TestVerifyElixirFindingsFailClosed(t *testing.T) {
+	cases := []struct {
+		name     string
+		seam     string
+		manifest string
+		want     string
+	}{
+		{"diverging entry", elixirSeam, exampleMixExs, "diverges from the lock projection"},
+		{"missing licenses entry", elixirSeam, "def project do\n  [package: [name: :x]]\nend\n", "licenses entry is missing"},
+		{"missing package configuration", elixirSeam, "defmodule X.MixProject do\nend\n", "licenses entry is missing"},
+		{"invalid entry", elixirSeam, "def project do\n  [package: [licenses: \"MIT\"]]\nend\n", "not a license entry list"},
+		{"multiple entries", elixirSeam, "def project do\n  [package: [licenses: [\"MIT\", \"Apache-2.0\"]]]\nend\n", "multiple license entries"},
+		{"empty list", elixirSeam, "def project do\n  [package: [licenses: []]]\nend\n", "cannot be proven"},
+		{"unscannable manifest", elixirSeam, "def project do\n  [package: [licenses: [\"MIT\"]]\nend\n", "cannot be proven"},
+		{"shadow without declaration", "", exampleMixExs, "without covering declaration"},
+		{"shadow with other language", goSeam, exampleMixExs, "without covering declaration"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedElixirSurface(f, testCase.seam, testCase.manifest)
+			service := NewLicenseService(f)
+			violations, err := service.Verify(verifyRequest(""))
+			if err != nil {
+				t.Fatalf("Verify() error = %v", err)
+			}
+			found := false
+			for _, violation := range violations {
+				if strings.Contains(violation, testCase.want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("Verify() violations = %v, want %q", violations, testCase.want)
+			}
+		})
+	}
+}
+
+func TestVerifyElixirCleanWithoutElixirSurfaces(t *testing.T) {
+	f := seededFS(t)
+	seedElixirSurface(f, goSeam, "")
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
