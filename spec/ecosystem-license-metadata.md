@@ -36,10 +36,17 @@ expressions; the `proprietary` form is the documented non-SPDX value);
     assignment or the value-equal `spec.licenses` array assignment; every
     entry is a single SPDX identifier, `LicenseRef-<idstring>` is the
     documented non-SPDX entry form, and entries are limited to 64
-    characters); `elixir` selects the mix.exs surface (the `licenses` entry
-    inside the `package` keyword list of the project configuration: a bracket
-    list of SPDX identifiers or `LicenseRef-<idstring>` entries for custom
-    licenses included in the package); Go selects no manifest field —
+characters); `elixir` selects the mix.exs surface (the `licenses` entry
+   inside the `package` keyword list of the project configuration: a bracket
+   list of SPDX identifiers or `LicenseRef-<idstring>` entries for custom
+   licenses included in the package); `haskell` selects the `*.cabal` surface
+   (the top-level fields of the package description: `license`, an SPDX
+   expression case-sensitive since cabal-version: 2.2 where
+   `LicenseRef-<idstring>` is the documented expression form for custom
+   licenses, and `license-file`, the single filename of the license text —
+   the `license-files` list form with exactly the projected file is the
+   value-equal alternative spelling; discovered in the render target
+   directory); Go selects no manifest field —
    the `LICENSE` file at the module root is the truth surface, and the
    adapter aligns nothing. Additional rows are grown content-driven when a
    consuming surface exists, with the field semantics verified against the
@@ -275,9 +282,49 @@ as well. A licenses value must be a bracket list of escape-free,
 interpolation-free double-quoted string literals; the empty list, a
 non-string entry, and a malformed delimiter are refused fail-closed. The
 insertion is anchored at the package bracket the scanner proved and is
-deterministic.
+   deterministic.
 
-## 10. Render alignment discipline
+## 10. The Haskell alignment contract
+
+The Haskell row targets `*.cabal` package descriptions. The license surface
+is the pair of top-level fields: `license` carries an SPDX license
+expression — case-sensitive since `cabal-version: 2.2` — where
+`LicenseRef-<idstring>` is the documented expression form for custom
+licenses included in the package, and `license-file` carries the single
+filename of the license text; the `license-files` list form is the
+documented alternative, and a list carrying exactly the projected file is
+the value-equal alternative spelling of the same declaration. The manifest
+names are glob-form: the adapter discovers `*.cabal` files in the render
+target directory and aligns every discovered file. The seam language token
+`haskell` selects the row.
+
+The bound organization projection: a declared `SPDX_LICENSE_IDENTIFIER`
+projects itself; the file-based custom family projects the SPDX sideload
+expression `LicenseRef-<LICENSE_ID>` (the tenant `LICENSE_ID` value). Both
+projections pair with the license-file field carrying `LICENSE` — the
+canonical license text at the repository root. The projected file form is
+the single `license-file` field: a diverging `license-file` value is
+value-replaced, a diverging one-entry `license-files` list is normalized to
+the projected `license-file` form, and a `license-files` list that declares
+more than one entry is refused fail-closed — the projection carries exactly
+one license text, and the resolution is an explicit tenant decision. A
+package description that declares the license field or the file surface
+more than once is refused for the same reason, and so is a license surface
+that lives inside a component section instead of the top-level package
+description.
+
+The adapter's scanner reads the package description line by line: line
+comments and blank lines are transparent, column-0 property lines are
+top-level fields, every other column-0 line opens a component section, and
+indented lines attach as continuations of the open top-level field. Field
+names are matched case-insensitively, quoted values must be escape-free,
+and a value that starts with the comment marker, an unterminated quoted
+value, an unterminated brace list, or indented content before any
+top-level property refuses the whole surface fail-closed. The insertion of
+a missing field anchors at the first top-level property block of the
+package description and is proven by a re-scan.
+
+## 11. Render alignment discipline
 
 The render is the sanctioned writer of tenant license surfaces, and the same
 governed act aligns the ecosystem license fields. Four disciplines bind
@@ -300,7 +347,7 @@ manifest is absent, and the dry-run plan previews the alignment without
 writing. A non-string license member or an unscannable manifest is refused
 fail-closed instead of being rewritten.
 
-## 11. Verification finding classes
+## 12. Verification finding classes
 
 Verification is fail-closed in both directions and yields exactly three
 finding classes:
@@ -320,9 +367,9 @@ finding classes:
 A diverging field is never adopted from the manifest into the lock; the
 correction direction is always lock → manifest through the render.
 
-## 12. Adapter set and growth rule
+## 13. Adapter set and growth rule
 
-The npm, Python, Rust, Maven, .NET, Composer, Ruby, and Elixir adapters are implemented. Every additional
+The npm, Python, Rust, Maven, .NET, Composer, Ruby, Elixir, and Haskell adapters are implemented. Every additional
 ecosystem adapter is born content-driven when a consuming project surface
 exists, and its matrix row records either the canonical field semantics
 (verified against the official ecosystem documentation at specification
@@ -330,7 +377,7 @@ time) or the explicit verdict that the ecosystem carries no manifest
 field — for those rows the file family is the declared truth and the
 adapter aligns nothing.
 
-## 13. Do / Don't
+## 14. Do / Don't
 
 **Do:** derive every expected field value from the lock through the matrix
 row; prove declaration, manifest, and field fail-closed in both directions;

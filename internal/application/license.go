@@ -180,6 +180,15 @@ var elixirRenderRow = ecosystemRenderRow{
 	},
 }
 
+var cabalRenderRow = ecosystemRenderRow{
+	language:      ecosystem.HaskellLanguage,
+	manifestLabel: "cabal manifest",
+	align: func(_ string, content string, merged map[string]string) (string, bool, error) {
+		return ecosystem.AlignCabalLicense(content, ecosystem.CabalProjection(merged))
+	},
+	discover: ecosystem.CabalManifestNames,
+}
+
 // prepare reads and validates every input of a render without writing
 // anything.
 func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
@@ -200,7 +209,7 @@ func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
 		template: template,
 		targets:  instancePaths(req.OutDir, merged),
 	}
-	for _, row := range []ecosystemRenderRow{npmRenderRow, pythonRenderRow, cargoRenderRow, mavenRenderRow, nugetRenderRow, composerRenderRow, gemspecRenderRow, elixirRenderRow} {
+	for _, row := range []ecosystemRenderRow{npmRenderRow, pythonRenderRow, cargoRenderRow, mavenRenderRow, nugetRenderRow, composerRenderRow, gemspecRenderRow, elixirRenderRow, cabalRenderRow} {
 		alignments, err := s.prepareEcosystemAlignment(req, merged, row)
 		if err != nil {
 			return preparedRender{}, err
@@ -335,7 +344,7 @@ func (s *LicenseService) Verify(req VerifyRequest) ([]string, error) {
 			violations = append(violations, "rendered file drifted from canonical render: "+target)
 		}
 	}
-	for _, row := range []ecosystemVerifyRow{npmVerifyRow, pythonVerifyRow, cargoVerifyRow, mavenVerifyRow, nugetVerifyRow, composerVerifyRow, gemspecVerifyRow, elixirVerifyRow} {
+	for _, row := range []ecosystemVerifyRow{npmVerifyRow, pythonVerifyRow, cargoVerifyRow, mavenVerifyRow, nugetVerifyRow, composerVerifyRow, gemspecVerifyRow, elixirVerifyRow, cabalVerifyRow} {
 		rowViolations, err := s.verifyEcosystem(req, merged, row)
 		if err != nil {
 			return nil, err
@@ -499,6 +508,14 @@ var elixirVerifyRow = ecosystemVerifyRow{
 	manifestName: ecosystem.ElixirManifestName,
 	label:        "elixir",
 	findings:     elixirFindings,
+}
+
+var cabalVerifyRow = ecosystemVerifyRow{
+	language:    ecosystem.HaskellLanguage,
+	label:       "cabal",
+	missingHint: "*.cabal",
+	findings:    cabalFindings,
+	discover:    ecosystem.CabalManifestNames,
 }
 
 // verifyEcosystem proves one declared ecosystem surface fail-closed in both
@@ -848,6 +865,47 @@ func elixirFindings(_ string, content, manifestPath string, merged map[string]st
 		violations = append(violations, "elixir licenses entry carries multiple license entries: "+manifestPath+" (the resolution is an explicit tenant decision)")
 	case surface.Value != target:
 		violations = append(violations, "elixir licenses entry diverges from the lock projection: observed \""+surface.Value+"\", expected \""+target+"\" (run the render to align)")
+	}
+	return violations
+}
+
+// cabalFindings derives the Haskell license-surface findings from the
+// inspected manifest and the lock projection: the license field, the license
+// file surface (the single license-file form or the value-equal one-entry
+// license-files spelling), and the fail-closed proof state.
+func cabalFindings(_ string, content, manifestPath string, merged map[string]string) []string {
+	target := ecosystem.CabalProjection(merged)
+	surface, err := ecosystem.InspectCabalLicense(content)
+	if err != nil {
+		return []string{"cabal license surface cannot be proven: " + manifestPath + " (" + err.Error() + ")"}
+	}
+	violations := []string{}
+	switch surface.State {
+	case ecosystem.CabalLicenseMissing:
+		violations = append(violations, "cabal license field is missing: "+manifestPath+" (expected \""+target+"\")")
+	case ecosystem.CabalLicenseInvalid:
+		violations = append(violations, "cabal license field is empty: "+manifestPath+" (expected \""+target+"\")")
+	case ecosystem.CabalLicenseValue:
+		if surface.Value != target {
+			violations = append(violations, "cabal license field diverges from the lock projection: observed \""+surface.Value+"\", expected \""+target+"\" (run the render to align)")
+		}
+	}
+	fileTarget := ecosystem.CabalFileTarget
+	switch surface.FileState {
+	case ecosystem.CabalFileMissing:
+		violations = append(violations, "cabal license-file field is missing: "+manifestPath+" (expected license-file: \""+fileTarget+"\")")
+	case ecosystem.CabalFileInvalid:
+		violations = append(violations, "cabal license-file field is empty: "+manifestPath)
+	case ecosystem.CabalFileSingle:
+		if surface.FileValue != fileTarget {
+			violations = append(violations, "cabal license-file field diverges from the lock projection: observed \""+surface.FileValue+"\", expected \""+fileTarget+"\" (run the render to align)")
+		}
+	case ecosystem.CabalFileList:
+		if len(surface.FileEntries) > 1 {
+			violations = append(violations, "cabal license-files field carries multiple license file entries: "+manifestPath+" (the resolution is an explicit tenant decision)")
+		} else if surface.FileEntries[0] != fileTarget {
+			violations = append(violations, "cabal license-files field diverges from the lock projection: observed ["+surface.FileEntries[0]+"], expected license-file: \""+fileTarget+"\" (run the render to align)")
+		}
 	}
 	return violations
 }
