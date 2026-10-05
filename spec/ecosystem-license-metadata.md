@@ -36,7 +36,10 @@ expressions; the `proprietary` form is the documented non-SPDX value);
     assignment or the value-equal `spec.licenses` array assignment; every
     entry is a single SPDX identifier, `LicenseRef-<idstring>` is the
     documented non-SPDX entry form, and entries are limited to 64
-    characters); Go selects no manifest field —
+    characters); `elixir` selects the mix.exs surface (the `licenses` entry
+    inside the `package` keyword list of the project configuration: a bracket
+    list of SPDX identifiers or `LicenseRef-<idstring>` entries for custom
+    licenses included in the package); Go selects no manifest field —
    the `LICENSE` file at the module root is the truth surface, and the
    adapter aligns nothing. Additional rows are grown content-driven when a
    consuming surface exists, with the field semantics verified against the
@@ -238,7 +241,43 @@ block, uses the block parameter as the receiver and the block body's
 indentation, and is proven by a re-scan: an anchor that does not produce a
 provable assignment is refused fail-closed.
 
-## 9. Render alignment discipline
+## 9. The Elixir alignment contract
+
+The Elixir row targets `mix.exs`. The Hex package configuration is the
+`package` keyword entry of the project keyword list, and its `licenses`
+entry is the license surface: a bracket list of SPDX license identifiers,
+where `LicenseRef-<idstring>` is the documented entry form for custom
+licenses included in the package (the configuration `mix hex.build`
+consumes). The seam language token `elixir` selects the row.
+
+The bound organization projection: a declared `SPDX_LICENSE_IDENTIFIER`
+projects itself; the file-based custom family projects the SPDX sideload
+entry `LicenseRef-<LICENSE_ID>` (the tenant `LICENSE_ID` value). The
+projected form is the single-entry list: a diverging single entry has its
+string-literal span replaced with the list formatting preserved, and a
+missing entry is inserted as the first member of the package keyword list.
+A list that declares more than one entry is refused fail-closed — the
+projection carries exactly one license family, and the resolution is an
+explicit tenant decision — and so is a mix.exs that declares the package
+configuration or the licenses entry more than once.
+
+The adapter's scanner lexes the file structurally and reads the keyword
+skeleton strictly: line comments, string literals, charlists, heredoc
+strings, and sigils are context, so a license entry inside them is never
+observed, and a structural break anywhere — an unterminated string,
+charlist, heredoc, sigil, interpolation, or bracket scope, plus a nesting
+depth beyond the scanner bound — refuses the whole surface fail-closed.
+The `licenses` entry is proven only as a direct member of the `package`
+keyword list: a licenses entry outside it (including the `def package`
+function form) and one nested deeper inside it are refused for the same
+reason, and a package configuration that is not a keyword list is refused
+as well. A licenses value must be a bracket list of escape-free,
+interpolation-free double-quoted string literals; the empty list, a
+non-string entry, and a malformed delimiter are refused fail-closed. The
+insertion is anchored at the package bracket the scanner proved and is
+deterministic.
+
+## 10. Render alignment discipline
 
 The render is the sanctioned writer of tenant license surfaces, and the same
 governed act aligns the ecosystem license fields. Four disciplines bind
@@ -261,7 +300,7 @@ manifest is absent, and the dry-run plan previews the alignment without
 writing. A non-string license member or an unscannable manifest is refused
 fail-closed instead of being rewritten.
 
-## 10. Verification finding classes
+## 11. Verification finding classes
 
 Verification is fail-closed in both directions and yields exactly three
 finding classes:
@@ -281,9 +320,9 @@ finding classes:
 A diverging field is never adopted from the manifest into the lock; the
 correction direction is always lock → manifest through the render.
 
-## 11. Adapter set and growth rule
+## 12. Adapter set and growth rule
 
-The npm, Python, Rust, Maven, .NET, Composer, and Ruby adapters are implemented. Every additional
+The npm, Python, Rust, Maven, .NET, Composer, Ruby, and Elixir adapters are implemented. Every additional
 ecosystem adapter is born content-driven when a consuming project surface
 exists, and its matrix row records either the canonical field semantics
 (verified against the official ecosystem documentation at specification
@@ -291,7 +330,7 @@ time) or the explicit verdict that the ecosystem carries no manifest
 field — for those rows the file family is the declared truth and the
 adapter aligns nothing.
 
-## 12. Do / Don't
+## 13. Do / Don't
 
 **Do:** derive every expected field value from the lock through the matrix
 row; prove declaration, manifest, and field fail-closed in both directions;

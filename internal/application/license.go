@@ -171,6 +171,15 @@ var gemspecRenderRow = ecosystemRenderRow{
 	discover: ecosystem.GemspecManifestNames,
 }
 
+var elixirRenderRow = ecosystemRenderRow{
+	language:      ecosystem.ElixirLanguage,
+	manifestName:  ecosystem.ElixirManifestName,
+	manifestLabel: "elixir manifest",
+	align: func(_ string, content string, merged map[string]string) (string, bool, error) {
+		return ecosystem.AlignElixirLicense(content, ecosystem.ElixirProjection(merged))
+	},
+}
+
 // prepare reads and validates every input of a render without writing
 // anything.
 func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
@@ -191,7 +200,7 @@ func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
 		template: template,
 		targets:  instancePaths(req.OutDir, merged),
 	}
-	for _, row := range []ecosystemRenderRow{npmRenderRow, pythonRenderRow, cargoRenderRow, mavenRenderRow, nugetRenderRow, composerRenderRow, gemspecRenderRow} {
+	for _, row := range []ecosystemRenderRow{npmRenderRow, pythonRenderRow, cargoRenderRow, mavenRenderRow, nugetRenderRow, composerRenderRow, gemspecRenderRow, elixirRenderRow} {
 		alignments, err := s.prepareEcosystemAlignment(req, merged, row)
 		if err != nil {
 			return preparedRender{}, err
@@ -326,7 +335,7 @@ func (s *LicenseService) Verify(req VerifyRequest) ([]string, error) {
 			violations = append(violations, "rendered file drifted from canonical render: "+target)
 		}
 	}
-	for _, row := range []ecosystemVerifyRow{npmVerifyRow, pythonVerifyRow, cargoVerifyRow, mavenVerifyRow, nugetVerifyRow, composerVerifyRow, gemspecVerifyRow} {
+	for _, row := range []ecosystemVerifyRow{npmVerifyRow, pythonVerifyRow, cargoVerifyRow, mavenVerifyRow, nugetVerifyRow, composerVerifyRow, gemspecVerifyRow, elixirVerifyRow} {
 		rowViolations, err := s.verifyEcosystem(req, merged, row)
 		if err != nil {
 			return nil, err
@@ -483,6 +492,13 @@ var gemspecVerifyRow = ecosystemVerifyRow{
 	missingHint: "*.gemspec",
 	findings:    gemspecFindings,
 	discover:    ecosystem.GemspecManifestNames,
+}
+
+var elixirVerifyRow = ecosystemVerifyRow{
+	language:     ecosystem.ElixirLanguage,
+	manifestName: ecosystem.ElixirManifestName,
+	label:        "elixir",
+	findings:     elixirFindings,
 }
 
 // verifyEcosystem proves one declared ecosystem surface fail-closed in both
@@ -809,6 +825,29 @@ func gemspecFindings(_ string, content, manifestPath string, merged map[string]s
 		violations = append(violations, "gemspec license field carries multiple license entries: "+manifestPath+" (the resolution is an explicit tenant decision)")
 	case surface.Value != target:
 		violations = append(violations, "gemspec license field diverges from the lock projection: observed \""+surface.Value+"\", expected \""+target+"\" (run the render to align)")
+	}
+	return violations
+}
+
+// elixirFindings derives the Elixir license-surface findings from the
+// inspected manifest and the lock projection: the declared licenses entry
+// (the single-entry list form), its value, and the fail-closed proof state.
+func elixirFindings(_ string, content, manifestPath string, merged map[string]string) []string {
+	target := ecosystem.ElixirProjection(merged)
+	surface, err := ecosystem.InspectElixirLicense(content)
+	if err != nil {
+		return []string{"elixir license surface cannot be proven: " + manifestPath + " (" + err.Error() + ")"}
+	}
+	violations := []string{}
+	switch {
+	case surface.State == ecosystem.ElixirLicenseMissing:
+		violations = append(violations, "elixir licenses entry is missing: "+manifestPath+" (expected licenses: [\""+target+"\"])")
+	case surface.State == ecosystem.ElixirLicenseInvalid:
+		violations = append(violations, "elixir licenses entry is not a license entry list: "+manifestPath+" (expected licenses: [\""+target+"\"])")
+	case surface.State == ecosystem.ElixirLicenseList && len(surface.Entries) > 1:
+		violations = append(violations, "elixir licenses entry carries multiple license entries: "+manifestPath+" (the resolution is an explicit tenant decision)")
+	case surface.Value != target:
+		violations = append(violations, "elixir licenses entry diverges from the lock projection: observed \""+surface.Value+"\", expected \""+target+"\" (run the render to align)")
 	}
 	return violations
 }
