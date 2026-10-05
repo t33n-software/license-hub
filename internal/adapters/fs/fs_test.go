@@ -40,3 +40,32 @@ func TestWriteFileFailsWhenParentIsFile(t *testing.T) {
 		t.Fatal("WriteFile() expected error when parent path is a file")
 	}
 }
+
+func TestListNamesListsNonDirectoryEntries(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.csproj"), []byte("<Project/>"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.nuspec"), []byte("<package/>"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "nested"), 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	s := New()
+	names, err := s.ListNames(dir)
+	if err != nil {
+		t.Fatalf("ListNames() error = %v", err)
+	}
+	want := []string{"a.csproj", "b.nuspec"}
+	if len(names) != len(want) || names[0] != want[0] || names[1] != want[1] {
+		t.Fatalf("ListNames() = %v, want %v", names, want)
+	}
+}
+
+func TestListNamesMissingDirectory(t *testing.T) {
+	s := New()
+	if _, err := s.ListNames(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("ListNames() expected error for missing directory")
+	}
+}

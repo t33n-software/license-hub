@@ -18,6 +18,7 @@ type fakeFS struct {
 	files    map[string][]byte
 	readErr  map[string]error
 	writeErr map[string]error
+	listErr  map[string]error
 }
 
 func newFakeFS() *fakeFS {
@@ -25,6 +26,7 @@ func newFakeFS() *fakeFS {
 		files:    make(map[string][]byte),
 		readErr:  make(map[string]error),
 		writeErr: make(map[string]error),
+		listErr:  make(map[string]error),
 	}
 }
 
@@ -45,6 +47,20 @@ func (f *fakeFS) WriteFile(path string, data []byte) error {
 	}
 	f.files[path] = data
 	return nil
+}
+
+func (f *fakeFS) ListNames(dir string) ([]string, error) {
+	if err, blocked := f.listErr[dir]; blocked {
+		return nil, err
+	}
+	names := []string{}
+	for path := range f.files {
+		if filepath.Dir(path) == dir {
+			names = append(names, filepath.Base(path))
+		}
+	}
+	slices.Sort(names)
+	return names, nil
 }
 
 const testTemplate = "{{PROJECT_NAME}} (c) {{COPYRIGHT_YEAR}} {{COPYRIGHT_HOLDER}}\n" +
@@ -1600,6 +1616,397 @@ func TestVerifyMavenFindingsFailClosed(t *testing.T) {
 func TestVerifyMavenCleanWithoutMavenSurfaces(t *testing.T) {
 	f := seededFS(t)
 	seedMavenSurface(f, goSeam, "")
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+// --- .NET ecosystem surfaces ---
+
+const nugetSeam = `{"schemaVersion":4,"toolchain":{"language":"nuget","version":"9.0.0"}}`
+
+const exampleNuspec = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<package xmlns=\"http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd\">\n    <metadata>\n        <id>example</id>\n        <version>1.0.0</version>\n    </metadata>\n</package>\n"
+
+const alignedNuspec = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<package xmlns=\"http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd\">\n    <metadata>\n        <license type=\"file\">LICENSE</license>\n        <id>example</id>\n        <version>1.0.0</version>\n    </metadata>\n</package>\n"
+
+const exampleProject = "<Project Sdk=\"Microsoft.NET.Sdk\">\n    <PropertyGroup>\n        <TargetFramework>net9.0</TargetFramework>\n    </PropertyGroup>\n</Project>\n"
+
+const alignedProject = "<Project Sdk=\"Microsoft.NET.Sdk\">\n    <PropertyGroup>\n        <PackageLicenseFile>LICENSE</PackageLicenseFile>\n        <TargetFramework>net9.0</TargetFramework>\n    </PropertyGroup>\n</Project>\n"
+
+var nuspecPath = filepath.Join("out", "example.nuspec")
+var projectPath = filepath.Join("out", "example.csproj")
+
+func seedNuGetSurface(f *fakeFS, seam, name, manifest string) {
+	if seam != "" {
+		f.files[seamPath] = []byte(seam)
+	}
+	if manifest != "" {
+		f.files[filepath.Join("out", name)] = []byte(manifest)
+	}
+}
+
+func TestRenderAlignsTheDeclaredNuspecSurface(t *testing.T) {
+	f := seededFS(t)
+	seedNuGetSurface(f, nugetSeam, "example.nuspec", exampleNuspec)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !slices.Equal(result.Aligned, []string{nuspecPath}) {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	if len(result.Skipped) != 0 {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+	content := string(f.files[nuspecPath])
+	if !strings.Contains(content, `<license type="file">LICENSE</license>`) {
+		t.Fatalf("Render() manifest = %q", content)
+	}
+	if !strings.Contains(content, "<id>example</id>") {
+		t.Fatalf("Render() touched a non-license element: %q", content)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderAlignsTheDeclaredMSBuildSurface(t *testing.T) {
+	f := seededFS(t)
+	seedNuGetSurface(f, nugetSeam, "example.csproj", exampleProject)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !slices.Equal(result.Aligned, []string{projectPath}) {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	if len(result.Skipped) != 0 {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+	content := string(f.files[projectPath])
+	if !strings.Contains(content, "<PackageLicenseFile>LICENSE</PackageLicenseFile>") {
+		t.Fatalf("Render() manifest = %q", content)
+	}
+	if !strings.Contains(content, "<TargetFramework>net9.0</TargetFramework>") {
+		t.Fatalf("Render() touched a non-license property: %q", content)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderNuGetAlignmentIsIdempotent(t *testing.T) {
+	f := seededFS(t)
+	seedNuGetSurface(f, nugetSeam, "example.nuspec", alignedNuspec)
+	seedNuGetSurface(f, nugetSeam, "example.csproj", alignedProject)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+}
+
+func TestPlanRenderPreviewsTheNuGetAlignment(t *testing.T) {
+	f := seededFS(t)
+	seedNuGetSurface(f, nugetSeam, "example.nuspec", exampleNuspec)
+	seedNuGetSurface(f, nugetSeam, "example.csproj", exampleProject)
+	service := NewLicenseService(f)
+	plan, err := service.PlanRender(renderRequest())
+	if err != nil {
+		t.Fatalf("PlanRender() error = %v", err)
+	}
+	if len(plan.Alignments) != 2 || !strings.Contains(plan.Alignments[0], projectPath) || !strings.Contains(plan.Alignments[1], nuspecPath) {
+		t.Fatalf("PlanRender() alignments = %v", plan.Alignments)
+	}
+	if string(f.files[nuspecPath]) != exampleNuspec || string(f.files[projectPath]) != exampleProject {
+		t.Fatalf("PlanRender() mutated the manifests")
+	}
+}
+
+func TestRenderSkipsTheAbsentDeclaredNuGetManifest(t *testing.T) {
+	f := seededFS(t)
+	seedNuGetSurface(f, nugetSeam, "", "")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	if len(result.Skipped) != 1 || !strings.Contains(result.Skipped[0], "absent") {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "manifest missing") {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderWithoutDeclarationLeavesNuGetSurfacesUntouched(t *testing.T) {
+	f := seededFS(t)
+	seedNuGetSurface(f, "", "example.nuspec", exampleNuspec)
+	seedNuGetSurface(f, "", "example.csproj", exampleProject)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 2 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderWithNonNuGetDeclarationLeavesNuGetSurfacesUntouched(t *testing.T) {
+	f := seededFS(t)
+	seedNuGetSurface(f, goSeam, "example.nuspec", exampleNuspec)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "without covering declaration") {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderRejectsAnInvalidNuGetSurface(t *testing.T) {
+	cases := []struct {
+		name         string
+		seam         string
+		manifestName string
+		manifest     string
+	}{
+		{"invalid seam", "{", "", ""},
+		{"malformed nuspec", nugetSeam, "example.nuspec", "<package>\n    <metadata>\n"},
+		{"invalid license type", nugetSeam, "example.nuspec", "<package>\n    <metadata>\n        <license type=\"external\">MIT</license>\n    </metadata>\n</package>\n"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedNuGetSurface(f, testCase.seam, testCase.manifestName, testCase.manifest)
+			service := NewLicenseService(f)
+			_, err := service.Render(renderRequest())
+			if !errors.Is(err, ErrInvalidEcosystemSurface) {
+				t.Fatalf("Render() error = %v, want ErrInvalidEcosystemSurface", err)
+			}
+		})
+	}
+}
+
+func TestRenderReportsNuGetReadFailures(t *testing.T) {
+	cases := []struct {
+		name    string
+		blocked string
+		wantIs  error
+		wantErr string
+	}{
+		{"seam read failure", seamPath, os.ErrPermission, "read ecosystem declaration"},
+		{"manifest read failure", nuspecPath, os.ErrPermission, "read nuget manifest"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedNuGetSurface(f, nugetSeam, "example.nuspec", exampleNuspec)
+			f.readErr[testCase.blocked] = testCase.wantIs
+			service := NewLicenseService(f)
+			_, err := service.Render(renderRequest())
+			if !errors.Is(err, testCase.wantIs) || !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Fatalf("Render() error = %v, want %v with %q", err, testCase.wantIs, testCase.wantErr)
+			}
+		})
+	}
+}
+
+func TestRenderReportsNuGetListingFailure(t *testing.T) {
+	f := seededFS(t)
+	seedNuGetSurface(f, nugetSeam, "", "")
+	f.listErr["out"] = os.ErrPermission
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("Render() error = %v, want os.ErrPermission", err)
+	}
+}
+
+func TestRenderToleratesAMissingTargetDirectoryListing(t *testing.T) {
+	f := seededFS(t)
+	seedNuGetSurface(f, nugetSeam, "", "")
+	f.listErr["out"] = os.ErrNotExist
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Skipped) != 1 || !strings.Contains(result.Skipped[0], "absent") {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+}
+
+func TestRenderNuGetAlignWriteError(t *testing.T) {
+	f := seededFS(t)
+	seedNuGetSurface(f, nugetSeam, "example.nuspec", exampleNuspec)
+	f.writeErr[nuspecPath] = fmt.Errorf("disk full")
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); err == nil {
+		t.Fatal("Render() expected nuget manifest write error")
+	}
+}
+
+func TestPlanRenderSkipsTheAbsentDeclaredNuGetManifest(t *testing.T) {
+	f := seededFS(t)
+	seedNuGetSurface(f, nugetSeam, "", "")
+	service := NewLicenseService(f)
+	plan, err := service.PlanRender(renderRequest())
+	if err != nil {
+		t.Fatalf("PlanRender() error = %v", err)
+	}
+	if len(plan.Skips) != 1 || !strings.Contains(plan.Skips[0], "absent") {
+		t.Fatalf("PlanRender() skips = %v", plan.Skips)
+	}
+	if len(plan.Alignments) != 0 {
+		t.Fatalf("PlanRender() alignments = %v", plan.Alignments)
+	}
+}
+
+func TestVerifyNuGetFindingsFailClosed(t *testing.T) {
+	cases := []struct {
+		name         string
+		seam         string
+		manifestName string
+		manifest     string
+		want         string
+	}{
+		{"diverging expression", nugetSeam, "example.nuspec", "<package>\n    <metadata>\n        <license type=\"expression\">MIT</license>\n    </metadata>\n</package>\n", "diverges from the lock projection"},
+		{"diverging file target", nugetSeam, "example.nuspec", "<package>\n    <metadata>\n        <license type=\"file\">COPYING</license>\n    </metadata>\n</package>\n", "diverges from the lock projection"},
+		{"missing element", nugetSeam, "example.nuspec", exampleNuspec, "license element is missing"},
+		{"invalid type", nugetSeam, "example.nuspec", "<package>\n    <metadata>\n        <license>MIT</license>\n    </metadata>\n</package>\n", "carries no valid type"},
+		{"multiple elements", nugetSeam, "example.nuspec", "<package>\n    <metadata>\n        <license type=\"expression\">MIT</license>\n        <license type=\"file\">LICENSE</license>\n    </metadata>\n</package>\n", "multiple license elements"},
+		{"deprecated licenseUrl", nugetSeam, "example.nuspec", "<package>\n    <metadata>\n        <license type=\"file\">LICENSE</license>\n        <licenseUrl>https://example.org</licenseUrl>\n    </metadata>\n</package>\n", "deprecated licenseUrl element"},
+		{"diverging property", nugetSeam, "example.csproj", "<Project>\n    <PropertyGroup>\n        <PackageLicenseExpression>MIT</PackageLicenseExpression>\n    </PropertyGroup>\n</Project>\n", "diverges from the lock projection"},
+		{"missing property", nugetSeam, "example.csproj", exampleProject, "license property is missing"},
+		{"multiple properties", nugetSeam, "example.csproj", "<Project>\n    <PropertyGroup>\n        <PackageLicenseExpression>MIT</PackageLicenseExpression>\n        <PackageLicenseFile>LICENSE</PackageLicenseFile>\n    </PropertyGroup>\n</Project>\n", "multiple license properties"},
+		{"deprecated PackageLicenseUrl", nugetSeam, "example.csproj", "<Project>\n    <PropertyGroup>\n        <PackageLicenseFile>LICENSE</PackageLicenseFile>\n        <PackageLicenseUrl>https://example.org</PackageLicenseUrl>\n    </PropertyGroup>\n</Project>\n", "deprecated PackageLicenseUrl property"},
+		{"unscannable nuspec", nugetSeam, "example.nuspec", "<package>\n    <metadata>\n", "cannot be proven"},
+		{"unscannable project", nugetSeam, "example.csproj", "<Project>\n", "cannot be proven"},
+		{"shadow without declaration", "", "example.nuspec", exampleNuspec, "without covering declaration"},
+		{"shadow with other language", goSeam, "example.csproj", exampleProject, "without covering declaration"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedNuGetSurface(f, testCase.seam, testCase.manifestName, testCase.manifest)
+			service := NewLicenseService(f)
+			violations, err := service.Verify(verifyRequest(""))
+			if err != nil {
+				t.Fatalf("Verify() error = %v", err)
+			}
+			found := false
+			for _, violation := range violations {
+				if strings.Contains(violation, testCase.want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("Verify() violations = %v, want %q", violations, testCase.want)
+			}
+		})
+	}
+}
+
+func TestVerifyReportsNuGetListingFailure(t *testing.T) {
+	f := seededFS(t)
+	seedNuGetSurface(f, nugetSeam, "", "")
+	f.listErr["out"] = os.ErrPermission
+	service := NewLicenseService(f)
+	if _, err := service.Verify(verifyRequest("")); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("Verify() error = %v, want os.ErrPermission", err)
+	}
+}
+
+func TestVerifyToleratesAMissingTargetDirectoryListing(t *testing.T) {
+	f := seededFS(t)
+	seedNuGetSurface(f, nugetSeam, "", "")
+	f.listErr["out"] = os.ErrNotExist
+	service := NewLicenseService(f)
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	found := false
+	for _, violation := range violations {
+		if strings.Contains(violation, "manifest missing") {
+			found = true
+		}
+	}
+	if len(violations) != 3 || !found {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestVerifyReportsNuGetManifestReadFailure(t *testing.T) {
+	f := seededFS(t)
+	seedNuGetSurface(f, nugetSeam, "example.nuspec", exampleNuspec)
+	f.readErr[nuspecPath] = os.ErrPermission
+	service := NewLicenseService(f)
+	if _, err := service.Verify(verifyRequest("")); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("Verify() error = %v, want os.ErrPermission", err)
+	}
+}
+
+func TestAlignmentReportHelpersTolerateNilAlignments(t *testing.T) {
+	service := NewLicenseService(newFakeFS())
+	result := RenderResult{}
+	if err := service.writeAlignment(nil, &result); err != nil {
+		t.Fatalf("writeAlignment(nil) error = %v", err)
+	}
+	plan := PlanResult{}
+	planAlignment(nil, &plan)
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 || len(plan.Alignments) != 0 || len(plan.Skips) != 0 {
+		t.Fatalf("nil alignment mutated the reports: %+v %+v", result, plan)
+	}
+}
+
+func TestVerifyNuGetCleanWithoutNuGetSurfaces(t *testing.T) {
+	f := seededFS(t)
+	seedNuGetSurface(f, goSeam, "", "")
 	service := NewLicenseService(f)
 	if _, err := service.Render(renderRequest()); err != nil {
 		t.Fatalf("Render() error = %v", err)

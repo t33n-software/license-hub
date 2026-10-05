@@ -215,6 +215,26 @@ func TestAlignMavenLicenseExpandsASelfClosingProjectRoot(t *testing.T) {
 	}
 }
 
+func TestAlignMavenLicenseExpansionKeepsTheEndTagNameClean(t *testing.T) {
+	// Regression: the expansion of a self-closing start tag that carries
+	// attributes must reconstruct the end tag from the element name alone.
+	form := MavenLicenseForm{Name: "MIT", URL: "https://example.org"}
+	aligned, changed, err := AlignMavenLicense("<project xmlns=\"http://maven.apache.org/POM/4.0.0\"/>", form)
+	if err != nil {
+		t.Fatalf("AlignMavenLicense() error = %v", err)
+	}
+	if !changed {
+		t.Fatal("AlignMavenLicense() changed = false, want true")
+	}
+	want := "<project xmlns=\"http://maven.apache.org/POM/4.0.0\">\n    <licenses>\n        <license>\n            <name>MIT</name>\n            <url>https://example.org</url>\n        </license>\n    </licenses></project>"
+	if aligned != want {
+		t.Fatalf("AlignMavenLicense() = %q, want %q", aligned, want)
+	}
+	if _, err := InspectMavenLicense(aligned); err != nil {
+		t.Fatalf("AlignMavenLicense() produced an unprovable surface: %q (%v)", aligned, err)
+	}
+}
+
 func TestAlignMavenLicenseIsIdempotentOnAlignedState(t *testing.T) {
 	form := MavenLicenseForm{Name: "example-NoRepublish-1.0", URL: "https://github.com/t33n-software/example"}
 	aligned, changed, err := AlignMavenLicense(pomWithLicense, form)
@@ -296,6 +316,7 @@ func FuzzAlignMavenLicense(f *testing.F) {
 	f.Add("<project>\n    <licenses/>\n</project>\n", "MIT", "https://example.org")
 	f.Add("<project>\n    <licenses>\n        <license/>\n    </licenses>\n</project>\n", "MIT", "https://example.org")
 	f.Add("<project/>", "MIT", "https://example.org")
+	f.Add("<project xmlns=\"http://maven.apache.org/POM/4.0.0\"/>", "MIT", "https://example.org")
 	f.Add("", "MIT", "https://example.org")
 	f.Add("<project>\n    <licenses>\n", "MIT", "https://example.org")
 	f.Add("<project>\n    <licenses>\n        <license>\n            <name>MIT</name>\n        </license>\n        <license/>\n    </licenses>\n</project>\n", "MIT", "https://example.org")

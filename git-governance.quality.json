@@ -57,6 +57,11 @@
         "package": "./internal/domain/ecosystem",
         "target": "FuzzAlignMavenLicense",
         "time": "50000x"
+      },
+      {
+        "package": "./internal/domain/ecosystem",
+        "target": "FuzzAlignNuGetLicense",
+        "time": "50000x"
       }
     ]
   }

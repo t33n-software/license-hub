@@ -40,6 +40,8 @@ var ErrInvalidEcosystemSurface = errors.New("invalid ecosystem license surface")
 type FileSystem interface {
 	ReadFile(path string) ([]byte, error)
 	WriteFile(path string, data []byte) error
+	// ListNames lists the non-directory entry names of a directory.
+	ListNames(dir string) ([]string, error)
 }
 
 // LicenseService renders and verifies canonical license instances.
@@ -77,13 +79,10 @@ type RenderResult struct {
 // content, the template bytes, the resolved instance targets, and the
 // prepared ecosystem alignments.
 type preparedRender struct {
-	content  string
-	template []byte
-	targets  []string
-	npm      *ecosystemAlignment
-	python   *ecosystemAlignment
-	cargo    *ecosystemAlignment
-	maven    *ecosystemAlignment
+	content    string
+	template   []byte
+	targets    []string
+	alignments []*ecosystemAlignment
 }
 
 // ecosystemAlignment carries the prepared ecosystem license-field alignment
@@ -98,19 +97,22 @@ type ecosystemAlignment struct {
 
 // ecosystemRenderRow binds one ecosystem matrix row to its render-side
 // alignment: the declared seam language, the manifest surface, and the
-// lock-projection alignment function.
+// lock-projection alignment function. A discovery row carries no fixed
+// manifest name; it discovers its manifest candidates from the directory
+// listing of the render target.
 type ecosystemRenderRow struct {
 	language      string
 	manifestName  string
 	manifestLabel string
-	align         func(content string, merged map[string]string) (string, bool, error)
+	align         func(name, content string, merged map[string]string) (string, bool, error)
+	discover      func(names []string) []string
 }
 
 var npmRenderRow = ecosystemRenderRow{
 	language:      ecosystem.NpmLanguage,
 	manifestName:  ecosystem.NpmManifestName,
 	manifestLabel: "npm manifest",
-	align: func(content string, merged map[string]string) (string, bool, error) {
+	align: func(_ string, content string, merged map[string]string) (string, bool, error) {
 		return ecosystem.AlignNpmLicense(content, ecosystem.NpmProjection(merged))
 	},
 }
@@ -119,7 +121,7 @@ var pythonRenderRow = ecosystemRenderRow{
 	language:      ecosystem.PythonLanguage,
 	manifestName:  ecosystem.PythonManifestName,
 	manifestLabel: "python manifest",
-	align: func(content string, merged map[string]string) (string, bool, error) {
+	align: func(_ string, content string, merged map[string]string) (string, bool, error) {
 		return ecosystem.AlignPythonLicense(content, ecosystem.PythonProjection(merged), ecosystem.PythonLicenseFilesTarget)
 	},
 }
@@ -128,7 +130,7 @@ var cargoRenderRow = ecosystemRenderRow{
 	language:      ecosystem.CargoLanguage,
 	manifestName:  ecosystem.CargoManifestName,
 	manifestLabel: "cargo manifest",
-	align: func(content string, merged map[string]string) (string, bool, error) {
+	align: func(_ string, content string, merged map[string]string) (string, bool, error) {
 		return ecosystem.AlignCargoLicense(content, ecosystem.CargoProjection(merged))
 	},
 }
@@ -137,9 +139,18 @@ var mavenRenderRow = ecosystemRenderRow{
 	language:      ecosystem.MavenLanguage,
 	manifestName:  ecosystem.MavenManifestName,
 	manifestLabel: "maven manifest",
-	align: func(content string, merged map[string]string) (string, bool, error) {
+	align: func(_ string, content string, merged map[string]string) (string, bool, error) {
 		return ecosystem.AlignMavenLicense(content, ecosystem.MavenProjection(merged))
 	},
+}
+
+var nugetRenderRow = ecosystemRenderRow{
+	language:      ecosystem.NuGetLanguage,
+	manifestLabel: "nuget manifest",
+	align: func(name, content string, merged map[string]string) (string, bool, error) {
+		return ecosystem.AlignNuGetSurface(name, content, ecosystem.NuGetProjection(merged))
+	},
+	discover: ecosystem.NuGetManifestNames,
 }
 
 // prepare reads and validates every input of a render without writing
@@ -157,31 +168,19 @@ func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
 	if unresolved := placeholder.Unresolved(content); len(unresolved) > 0 {
 		return preparedRender{}, fmt.Errorf("%w: %s", ErrUnresolvedPlaceholders, strings.Join(unresolved, ", "))
 	}
-	npm, err := s.prepareEcosystemAlignment(req, merged, npmRenderRow)
-	if err != nil {
-		return preparedRender{}, err
-	}
-	python, err := s.prepareEcosystemAlignment(req, merged, pythonRenderRow)
-	if err != nil {
-		return preparedRender{}, err
-	}
-	cargo, err := s.prepareEcosystemAlignment(req, merged, cargoRenderRow)
-	if err != nil {
-		return preparedRender{}, err
-	}
-	maven, err := s.prepareEcosystemAlignment(req, merged, mavenRenderRow)
-	if err != nil {
-		return preparedRender{}, err
-	}
-	return preparedRender{
+	prepared := preparedRender{
 		content:  content,
 		template: template,
 		targets:  instancePaths(req.OutDir, merged),
-		npm:      npm,
-		python:   python,
-		cargo:    cargo,
-		maven:    maven,
-	}, nil
+	}
+	for _, row := range []ecosystemRenderRow{npmRenderRow, pythonRenderRow, cargoRenderRow, mavenRenderRow, nugetRenderRow} {
+		alignments, err := s.prepareEcosystemAlignment(req, merged, row)
+		if err != nil {
+			return preparedRender{}, err
+		}
+		prepared.alignments = append(prepared.alignments, alignments...)
+	}
+	return prepared, nil
 }
 
 // Render renders the canonical template into the LICENSE and LICENSES/
@@ -198,7 +197,7 @@ func (s *LicenseService) Render(req RenderRequest) (RenderResult, error) {
 		}
 	}
 	result := RenderResult{Written: prepared.targets, Digest: digest.SHA256(prepared.template)}
-	for _, alignment := range []*ecosystemAlignment{prepared.npm, prepared.python, prepared.cargo, prepared.maven} {
+	for _, alignment := range prepared.alignments {
 		if err := s.writeAlignment(alignment, &result); err != nil {
 			return RenderResult{}, err
 		}
@@ -245,7 +244,7 @@ func (s *LicenseService) PlanRender(req RenderRequest) (PlanResult, error) {
 		return PlanResult{}, err
 	}
 	plan := PlanResult{Targets: prepared.targets, Digest: digest.SHA256(prepared.template)}
-	for _, alignment := range []*ecosystemAlignment{prepared.npm, prepared.python, prepared.cargo, prepared.maven} {
+	for _, alignment := range prepared.alignments {
 		planAlignment(alignment, &plan)
 	}
 	return plan, nil
@@ -309,7 +308,7 @@ func (s *LicenseService) Verify(req VerifyRequest) ([]string, error) {
 			violations = append(violations, "rendered file drifted from canonical render: "+target)
 		}
 	}
-	for _, row := range []ecosystemVerifyRow{npmVerifyRow, pythonVerifyRow, cargoVerifyRow, mavenVerifyRow} {
+	for _, row := range []ecosystemVerifyRow{npmVerifyRow, pythonVerifyRow, cargoVerifyRow, mavenVerifyRow, nugetVerifyRow} {
 		rowViolations, err := s.verifyEcosystem(req, merged, row)
 		if err != nil {
 			return nil, err
@@ -328,14 +327,15 @@ func (s *LicenseService) TemplateDigest(path string) (string, error) {
 	return digest.SHA256(template), nil
 }
 
-// prepareEcosystemAlignment derives the ecosystem license-field alignment of
-// one render from the declaration seam and the merged tenant values. A
+// prepareEcosystemAlignment derives the ecosystem license-field alignments
+// of one render from the declaration seam and the merged tenant values. A
 // missing seam or a foreign declaration leaves the surface untouched; a
 // declared project without a manifest is reported as a skip that the verify
-// lane carries as a fail-closed finding.
+// lane carries as a fail-closed finding. A discovery row aligns every
+// manifest candidate it finds in the render target directory.
 //
 // Convention: spec/ecosystem-license-metadata.md
-func (s *LicenseService) prepareEcosystemAlignment(req RenderRequest, merged map[string]string, row ecosystemRenderRow) (*ecosystemAlignment, error) {
+func (s *LicenseService) prepareEcosystemAlignment(req RenderRequest, merged map[string]string, row ecosystemRenderRow) ([]*ecosystemAlignment, error) {
 	seamPath := filepath.Join(req.OutDir, ecosystem.SeamFileName)
 	seamData, err := s.fs.ReadFile(seamPath)
 	if err != nil {
@@ -351,7 +351,42 @@ func (s *LicenseService) prepareEcosystemAlignment(req RenderRequest, merged map
 	if language != row.language {
 		return nil, nil
 	}
-	manifestPath := filepath.Join(req.OutDir, row.manifestName)
+	if row.discover == nil {
+		alignment, err := s.prepareNamedAlignment(filepath.Join(req.OutDir, row.manifestName), row, merged)
+		if err != nil {
+			return nil, err
+		}
+		return []*ecosystemAlignment{alignment}, nil
+	}
+	names, err := s.fs.ListNames(req.OutDir)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("list %s manifests in %s: %w", row.manifestLabel, req.OutDir, err)
+		}
+		names = nil
+	}
+	candidates := row.discover(names)
+	if len(candidates) == 0 {
+		return []*ecosystemAlignment{{
+			manifestPath: req.OutDir,
+			skip:         row.manifestLabel + " is absent: the declared license surface cannot be aligned",
+		}}, nil
+	}
+	alignments := []*ecosystemAlignment{}
+	for _, name := range candidates {
+		alignment, err := s.prepareNamedAlignment(filepath.Join(req.OutDir, name), row, merged)
+		if err != nil {
+			return nil, err
+		}
+		alignments = append(alignments, alignment)
+	}
+	return alignments, nil
+}
+
+// prepareNamedAlignment prepares the license-field alignment of one
+// manifest: the aligned content and whether bytes change, or the reason the
+// declared surface cannot be aligned.
+func (s *LicenseService) prepareNamedAlignment(manifestPath string, row ecosystemRenderRow, merged map[string]string) (*ecosystemAlignment, error) {
 	data, err := s.fs.ReadFile(manifestPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -362,7 +397,7 @@ func (s *LicenseService) prepareEcosystemAlignment(req RenderRequest, merged map
 		}
 		return nil, fmt.Errorf("read %s %s: %w", row.manifestLabel, manifestPath, err)
 	}
-	aligned, changed, err := row.align(string(data), merged)
+	aligned, changed, err := row.align(filepath.Base(manifestPath), string(data), merged)
 	if err != nil {
 		return nil, fmt.Errorf("%w: align %s %s: %v", ErrInvalidEcosystemSurface, row.manifestLabel, manifestPath, err)
 	}
@@ -370,12 +405,15 @@ func (s *LicenseService) prepareEcosystemAlignment(req RenderRequest, merged map
 }
 
 // ecosystemVerifyRow binds one ecosystem matrix row to its verify-side
-// finding derivation.
+// finding derivation. A discovery row carries no fixed manifest name and
+// proves every manifest candidate it finds in the verified directory.
 type ecosystemVerifyRow struct {
 	language     string
 	manifestName string
 	label        string
-	findings     func(content, manifestPath string, merged map[string]string) []string
+	missingHint  string
+	findings     func(name, content, manifestPath string, merged map[string]string) []string
+	discover     func(names []string) []string
 }
 
 var npmVerifyRow = ecosystemVerifyRow{
@@ -406,10 +444,19 @@ var mavenVerifyRow = ecosystemVerifyRow{
 	findings:     mavenFindings,
 }
 
+var nugetVerifyRow = ecosystemVerifyRow{
+	language:    ecosystem.NuGetLanguage,
+	label:       "nuget",
+	missingHint: "*.csproj or *.nuspec",
+	findings:    nugetFindings,
+	discover:    ecosystem.NuGetManifestNames,
+}
+
 // verifyEcosystem proves one declared ecosystem surface fail-closed in both
 // directions: a declared manifest that is missing or diverging is a finding,
 // a manifest without a covering declaration is a shadow-surface finding, and
-// an unscannable surface is a proof failure.
+// an unscannable surface is a proof failure. A discovery row proves every
+// manifest candidate it finds in the verified directory.
 //
 // Convention: spec/ecosystem-license-metadata.md
 func (s *LicenseService) verifyEcosystem(req VerifyRequest, merged map[string]string, row ecosystemVerifyRow) ([]string, error) {
@@ -427,6 +474,9 @@ func (s *LicenseService) verifyEcosystem(req VerifyRequest, merged map[string]st
 		// No declaration: only the shadow-surface guard applies.
 	default:
 		return nil, fmt.Errorf("read ecosystem declaration %s: %w", seamPath, seamErr)
+	}
+	if row.discover != nil {
+		return s.verifyDiscoveredEcosystem(req, seamErr, language, merged, row)
 	}
 	manifestPath := filepath.Join(req.Dir, row.manifestName)
 	data, manifestErr := s.fs.ReadFile(manifestPath)
@@ -451,12 +501,55 @@ func (s *LicenseService) verifyEcosystem(req VerifyRequest, merged map[string]st
 			row.label + " license metadata surface without covering declaration: " + manifestPath + " (" + detail + ")",
 		}, nil
 	}
-	return row.findings(string(data), manifestPath, merged), nil
+	return row.findings(row.manifestName, string(data), manifestPath, merged), nil
+}
+
+// verifyDiscoveredEcosystem proves the manifest candidates of a discovery
+// row fail-closed in both directions: the declared row without any
+// candidate is a missing finding, every candidate without a covering
+// declaration is a shadow-surface finding, and every candidate surface is
+// proven against the lock projection.
+func (s *LicenseService) verifyDiscoveredEcosystem(req VerifyRequest, seamErr error, language string, merged map[string]string, row ecosystemVerifyRow) ([]string, error) {
+	names, err := s.fs.ListNames(req.Dir)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("list %s manifests in %s: %w", row.label, req.Dir, err)
+		}
+		names = nil
+	}
+	candidates := row.discover(names)
+	if len(candidates) == 0 {
+		if language == row.language {
+			return []string{
+				"declared " + row.label + " ecosystem manifest missing: no " + row.missingHint +
+					" manifest is present under " + req.Dir + " (declared language: \"" + row.language + "\")",
+			}, nil
+		}
+		return nil, nil
+	}
+	violations := []string{}
+	for _, name := range candidates {
+		manifestPath := filepath.Join(req.Dir, name)
+		data, err := s.fs.ReadFile(manifestPath)
+		if err != nil {
+			return nil, fmt.Errorf("read %s manifest %s: %w", row.label, manifestPath, err)
+		}
+		if language != row.language {
+			detail := "no ecosystem declaration found (" + ecosystem.SeamFileName + " is absent)"
+			if seamErr == nil {
+				detail = "declared language: \"" + language + "\""
+			}
+			violations = append(violations, row.label+" license metadata surface without covering declaration: "+manifestPath+" ("+detail+")")
+			continue
+		}
+		violations = append(violations, row.findings(name, string(data), manifestPath, merged)...)
+	}
+	return violations, nil
 }
 
 // npmFindings derives the npm license-surface findings from the inspected
 // manifest and the lock projection.
-func npmFindings(content, manifestPath string, merged map[string]string) []string {
+func npmFindings(_ string, content, manifestPath string, merged map[string]string) []string {
 	target := ecosystem.NpmProjection(merged)
 	value, state, err := ecosystem.InspectNpmLicense(content)
 	if err != nil {
@@ -480,7 +573,7 @@ func npmFindings(content, manifestPath string, merged map[string]string) []strin
 // pythonFindings derives the Python license-surface findings from the
 // inspected manifest and the lock projection: the license field, the
 // license-files globs, and the deprecated License :: classifier guard.
-func pythonFindings(content, manifestPath string, merged map[string]string) []string {
+func pythonFindings(_ string, content, manifestPath string, merged map[string]string) []string {
 	target := ecosystem.PythonProjection(merged)
 	surface, err := ecosystem.InspectPythonLicense(content)
 	if err != nil {
@@ -520,7 +613,7 @@ func pythonFindings(content, manifestPath string, merged map[string]string) []st
 // cargoFindings derives the Rust license-surface findings from the inspected
 // manifest and the lock projection: the declared form (the exclusive
 // license keys), its value, and the fail-closed proof state.
-func cargoFindings(content, manifestPath string, merged map[string]string) []string {
+func cargoFindings(_ string, content, manifestPath string, merged map[string]string) []string {
 	form := ecosystem.CargoProjection(merged)
 	surface, err := ecosystem.InspectCargoLicense(content)
 	if err != nil {
@@ -547,7 +640,7 @@ func cargoFindings(content, manifestPath string, merged map[string]string) []str
 // mavenFindings derives the Maven license-surface findings from the
 // inspected manifest and the lock projection: the licenses element, its
 // license count, and the name and url values of the first license element.
-func mavenFindings(content, manifestPath string, merged map[string]string) []string {
+func mavenFindings(_ string, content, manifestPath string, merged map[string]string) []string {
 	form := ecosystem.MavenProjection(merged)
 	surface, err := ecosystem.InspectMavenLicense(content)
 	if err != nil {
@@ -567,6 +660,74 @@ func mavenFindings(content, manifestPath string, merged map[string]string) []str
 		violations = append(violations, "maven license url element is missing: "+manifestPath+" (expected \""+form.URL+"\")")
 	case surface.URL != form.URL:
 		violations = append(violations, "maven license url diverges from the lock projection: observed \""+surface.URL+"\", expected \""+form.URL+"\" (run the render to align)")
+	}
+	return violations
+}
+
+// nugetFindings derives the .NET license-surface findings from one
+// discovered manifest and the lock projection. The manifest name selects
+// the surface phrasing: the nuspec license element or the MSBuild license
+// property.
+func nugetFindings(name, content, manifestPath string, merged map[string]string) []string {
+	form := ecosystem.NuGetProjection(merged)
+	surface, err := ecosystem.InspectNuGetSurface(name, content)
+	if err != nil {
+		return []string{"nuget license surface cannot be proven: " + manifestPath + " (" + err.Error() + ")"}
+	}
+	if strings.HasSuffix(strings.ToLower(name), ecosystem.MSBuildSuffix) {
+		return msBuildFindings(surface, manifestPath, form)
+	}
+	return nuspecFindings(surface, manifestPath, form)
+}
+
+// nuspecFindings derives the nuspec license-element findings: the declared
+// form, its value, the multiple-declaration refusal, and the deprecated
+// licenseUrl guard.
+func nuspecFindings(surface ecosystem.NuGetSurface, manifestPath string, form ecosystem.NuGetLicenseForm) []string {
+	expected := form.NuspecLabel()
+	violations := []string{}
+	if surface.FormCount > 1 {
+		violations = append(violations, "nuget metadata element carries multiple license elements: "+manifestPath+" (the resolution is an explicit tenant decision)")
+	} else {
+		switch surface.State {
+		case ecosystem.NuGetSurfaceMissing:
+			violations = append(violations, "nuget license element is missing: "+manifestPath+" (expected "+expected+")")
+		case ecosystem.NuGetSurfaceInvalid:
+			violations = append(violations, "nuget license element carries no valid type: "+manifestPath+" (expected type=\"expression\" or type=\"file\")")
+		case ecosystem.NuGetSurfaceDeclared:
+			if surface.Expression != form.Expression || surface.Value != form.Value {
+				observed := ecosystem.NuGetLicenseForm{Expression: surface.Expression, Value: surface.Value}.NuspecLabel()
+				violations = append(violations, "nuget license element diverges from the lock projection: observed "+observed+", expected "+expected+" (run the render to align)")
+			}
+		}
+	}
+	if surface.DeprecatedURLPresent {
+		violations = append(violations, "nuget manifest carries the deprecated licenseUrl element: "+manifestPath+" (removal is an explicit tenant decision)")
+	}
+	return violations
+}
+
+// msBuildFindings derives the MSBuild license-property findings: the
+// declared form, its value, the multiple-declaration refusal, and the
+// deprecated PackageLicenseUrl guard.
+func msBuildFindings(surface ecosystem.NuGetSurface, manifestPath string, form ecosystem.NuGetLicenseForm) []string {
+	expected := form.MSBuildLabel()
+	violations := []string{}
+	if surface.FormCount > 1 {
+		violations = append(violations, "msbuild project carries multiple license properties: "+manifestPath+" (the resolution is an explicit tenant decision)")
+	} else {
+		switch surface.State {
+		case ecosystem.NuGetSurfaceMissing:
+			violations = append(violations, "msbuild license property is missing: "+manifestPath+" (expected "+expected+")")
+		case ecosystem.NuGetSurfaceDeclared:
+			if surface.Expression != form.Expression || surface.Value != form.Value {
+				observed := ecosystem.NuGetLicenseForm{Expression: surface.Expression, Value: surface.Value}.MSBuildLabel()
+				violations = append(violations, "msbuild license property diverges from the lock projection: observed "+observed+", expected "+expected+" (run the render to align)")
+			}
+		}
+	}
+	if surface.DeprecatedURLPresent {
+		violations = append(violations, "msbuild manifest carries the deprecated PackageLicenseUrl property: "+manifestPath+" (removal is an explicit tenant decision)")
 	}
 	return violations
 }
