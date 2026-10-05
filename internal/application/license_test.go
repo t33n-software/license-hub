@@ -2019,3 +2019,274 @@ func TestVerifyNuGetCleanWithoutNuGetSurfaces(t *testing.T) {
 		t.Fatalf("Verify() violations = %v", violations)
 	}
 }
+
+// --- Composer ecosystem surfaces ---
+
+const composerSeam = `{"schemaVersion":4,"toolchain":{"language":"composer","version":"2.9.0"}}`
+
+var composerManifestPath = filepath.Join("out", "composer.json")
+
+func seedComposerSurface(f *fakeFS, seam, manifest string) {
+	if seam != "" {
+		f.files[seamPath] = []byte(seam)
+	}
+	if manifest != "" {
+		f.files[composerManifestPath] = []byte(manifest)
+	}
+}
+
+func TestRenderAlignsTheDeclaredComposerSurface(t *testing.T) {
+	f := seededFS(t)
+	seedComposerSurface(f, composerSeam, "{\n  \"name\": \"example-project\",\n  \"license\": \"MIT\"\n}\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !slices.Equal(result.Aligned, []string{composerManifestPath}) {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	if len(result.Skipped) != 0 {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+	content := string(f.files[composerManifestPath])
+	if !strings.Contains(content, `"license": "LicenseRef-license-hub-NoRepublish-1.0"`) {
+		t.Fatalf("Render() manifest = %q", content)
+	}
+	if !strings.Contains(content, "\"name\": \"example-project\"") {
+		t.Fatalf("Render() touched a non-license field: %q", content)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderComposerAlignmentIsIdempotent(t *testing.T) {
+	f := seededFS(t)
+	seedComposerSurface(f, composerSeam, "{\n  \"license\": \"LicenseRef-license-hub-NoRepublish-1.0\"\n}\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+}
+
+func TestRenderComposerArraySpellingIsAlignedWithoutChange(t *testing.T) {
+	f := seededFS(t)
+	seedComposerSurface(f, composerSeam, "{\n  \"license\": [\"LicenseRef-license-hub-NoRepublish-1.0\"]\n}\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+}
+
+func TestPlanRenderPreviewsTheComposerAlignment(t *testing.T) {
+	f := seededFS(t)
+	seedComposerSurface(f, composerSeam, "{\n  \"license\": \"MIT\"\n}\n")
+	service := NewLicenseService(f)
+	plan, err := service.PlanRender(renderRequest())
+	if err != nil {
+		t.Fatalf("PlanRender() error = %v", err)
+	}
+	if len(plan.Alignments) != 1 || !strings.Contains(plan.Alignments[0], composerManifestPath) {
+		t.Fatalf("PlanRender() alignments = %v", plan.Alignments)
+	}
+	if string(f.files[composerManifestPath]) != "{\n  \"license\": \"MIT\"\n}\n" {
+		t.Fatalf("PlanRender() mutated the manifest: %q", f.files[composerManifestPath])
+	}
+}
+
+func TestRenderSkipsTheAbsentDeclaredComposerManifest(t *testing.T) {
+	f := seededFS(t)
+	seedComposerSurface(f, composerSeam, "")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	if len(result.Skipped) != 1 || !strings.Contains(result.Skipped[0], "absent") {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "manifest missing") {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderWithoutDeclarationLeavesComposerSurfacesUntouched(t *testing.T) {
+	f := seededFS(t)
+	seedComposerSurface(f, "", "{\n  \"license\": \"MIT\"\n}\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+}
+
+func TestRenderWithNonComposerDeclarationLeavesComposerSurfacesUntouched(t *testing.T) {
+	f := seededFS(t)
+	seedComposerSurface(f, goSeam, "{\n  \"license\": \"MIT\"\n}\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "without covering declaration") {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderRejectsAnInvalidComposerSurface(t *testing.T) {
+	cases := []struct {
+		name     string
+		seam     string
+		manifest string
+	}{
+		{"invalid seam", "{", ""},
+		{"invalid manifest", composerSeam, `{"license":`},
+		{"multiple entries", composerSeam, `{"license":["MIT","Apache-2.0"]}`},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedComposerSurface(f, testCase.seam, testCase.manifest)
+			service := NewLicenseService(f)
+			_, err := service.Render(renderRequest())
+			if !errors.Is(err, ErrInvalidEcosystemSurface) {
+				t.Fatalf("Render() error = %v, want ErrInvalidEcosystemSurface", err)
+			}
+		})
+	}
+}
+
+func TestRenderReportsComposerReadFailures(t *testing.T) {
+	cases := []struct {
+		name    string
+		blocked string
+		wantIs  error
+		wantErr string
+	}{
+		{"seam read failure", seamPath, os.ErrPermission, "read ecosystem declaration"},
+		{"manifest read failure", composerManifestPath, os.ErrPermission, "read composer manifest"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedComposerSurface(f, composerSeam, "{\n  \"license\": \"MIT\"\n}\n")
+			f.readErr[testCase.blocked] = testCase.wantIs
+			service := NewLicenseService(f)
+			_, err := service.Render(renderRequest())
+			if !errors.Is(err, testCase.wantIs) || !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Fatalf("Render() error = %v, want %v with %q", err, testCase.wantIs, testCase.wantErr)
+			}
+		})
+	}
+}
+
+func TestRenderComposerAlignWriteError(t *testing.T) {
+	f := seededFS(t)
+	seedComposerSurface(f, composerSeam, "{\n  \"license\": \"MIT\"\n}\n")
+	f.writeErr[composerManifestPath] = fmt.Errorf("disk full")
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); err == nil {
+		t.Fatal("Render() expected composer manifest write error")
+	}
+}
+
+func TestPlanRenderSkipsTheAbsentDeclaredComposerManifest(t *testing.T) {
+	f := seededFS(t)
+	seedComposerSurface(f, composerSeam, "")
+	service := NewLicenseService(f)
+	plan, err := service.PlanRender(renderRequest())
+	if err != nil {
+		t.Fatalf("PlanRender() error = %v", err)
+	}
+	if len(plan.Skips) != 1 || !strings.Contains(plan.Skips[0], "absent") {
+		t.Fatalf("PlanRender() skips = %v", plan.Skips)
+	}
+	if len(plan.Alignments) != 0 {
+		t.Fatalf("PlanRender() alignments = %v", plan.Alignments)
+	}
+}
+
+func TestVerifyComposerFindingsFailClosed(t *testing.T) {
+	cases := []struct {
+		name     string
+		seam     string
+		manifest string
+		want     string
+	}{
+		{"diverging field", composerSeam, "{\n  \"license\": \"MIT\"\n}\n", "diverges from the lock projection"},
+		{"diverging array spelling", composerSeam, "{\n  \"license\": [\"MIT\"]\n}\n", "diverges from the lock projection"},
+		{"missing field", composerSeam, "{\n  \"name\": \"x\"\n}\n", "license field is missing"},
+		{"invalid field", composerSeam, "{\n  \"license\": {\"type\": \"MIT\"}\n}\n", "not a license expression string or array"},
+		{"multiple entries", composerSeam, "{\n  \"license\": [\"MIT\", \"Apache-2.0\"]\n}\n", "multiple license entries"},
+		{"empty array", composerSeam, "{\n  \"license\": []\n}\n", "cannot be proven"},
+		{"unscannable manifest", composerSeam, `{"license":`, "cannot be proven"},
+		{"shadow without declaration", "", "{\n  \"license\": \"MIT\"\n}\n", "without covering declaration"},
+		{"shadow with other language", goSeam, "{\n  \"license\": \"MIT\"\n}\n", "without covering declaration"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedComposerSurface(f, testCase.seam, testCase.manifest)
+			service := NewLicenseService(f)
+			violations, err := service.Verify(verifyRequest(""))
+			if err != nil {
+				t.Fatalf("Verify() error = %v", err)
+			}
+			found := false
+			for _, violation := range violations {
+				if strings.Contains(violation, testCase.want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("Verify() violations = %v, want %q", violations, testCase.want)
+			}
+		})
+	}
+}
+
+func TestVerifyComposerCleanWithoutComposerSurfaces(t *testing.T) {
+	f := seededFS(t)
+	seedComposerSurface(f, goSeam, "")
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}

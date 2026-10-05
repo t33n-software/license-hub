@@ -29,7 +29,10 @@ type.
    `licenses` element: every `license` element carries `name` and `url`);
    `nuget` selects the NuGet packaging surfaces (the `*.nuspec` `<license>`
    element and the `*.csproj` MSBuild pack properties, discovered in the
-   render target directory); Go selects no manifest field —
+   render target directory); `composer` selects the composer.json surface
+   (field `license`: an SPDX expression string or an array of SPDX
+   expressions; the `proprietary` form is the documented non-SPDX value);
+   Go selects no manifest field —
    the `LICENSE` file at the module root is the truth surface, and the
    adapter aligns nothing. Additional rows are grown content-driven when a
    consuming surface exists, with the field semantics verified against the
@@ -165,7 +168,33 @@ whose type attribute is neither the expression nor the file form are refused
 for the same reason. The alignment inserts the missing license surface
 deterministically and replaces only the char-data spans of diverging values.
 
-## 7. Render alignment discipline
+## 7. The Composer alignment contract
+
+The Composer row targets `composer.json`. The `license` field carries an
+SPDX license expression as a string or an array of SPDX license expressions;
+the `proprietary` form is the documented non-SPDX value, and the compound
+expression forms (`A or B`, `A and B`) are legal string expressions. The
+seam language token `composer` selects the row.
+
+The bound organization projection: a declared `SPDX_LICENSE_IDENTIFIER`
+projects itself; the file-based custom family projects the SPDX sideload
+expression `LicenseRef-<LICENSE_ID>` (the tenant `LICENSE_ID` value) — the
+composer field carries SPDX expressions, and the sideload form keeps the
+license family identity. The projected form is the string expression: a
+diverging string value or a one-element array is aligned to the projected
+string form, and the one-element array carrying the projected value is the
+value-equal alternative spelling of the same declaration. A license array
+that declares more than one expression is refused fail-closed — the
+projection carries exactly one license family, and the resolution is an
+explicit tenant decision.
+
+The adapter reuses the shared JSON scanner of the package: a manifest the
+scanner cannot interpret is refused fail-closed, a license member declared
+more than once is refused for the same reason, and the array scan refuses
+every non-string entry, the empty array, and every malformed delimiter form
+fail-closed.
+
+## 8. Render alignment discipline
 
 The render is the sanctioned writer of tenant license surfaces, and the same
 governed act aligns the ecosystem license fields. Four disciplines bind
@@ -188,7 +217,7 @@ manifest is absent, and the dry-run plan previews the alignment without
 writing. A non-string license member or an unscannable manifest is refused
 fail-closed instead of being rewritten.
 
-## 8. Verification finding classes
+## 9. Verification finding classes
 
 Verification is fail-closed in both directions and yields exactly three
 finding classes:
@@ -208,9 +237,9 @@ finding classes:
 A diverging field is never adopted from the manifest into the lock; the
 correction direction is always lock → manifest through the render.
 
-## 9. Adapter set and growth rule
+## 10. Adapter set and growth rule
 
-The npm, Python, Rust, Maven, and .NET adapters are implemented. Every additional
+The npm, Python, Rust, Maven, .NET, and Composer adapters are implemented. Every additional
 ecosystem adapter is born content-driven when a consuming project surface
 exists, and its matrix row records either the canonical field semantics
 (verified against the official ecosystem documentation at specification
@@ -218,7 +247,7 @@ time) or the explicit verdict that the ecosystem carries no manifest
 field — for those rows the file family is the declared truth and the
 adapter aligns nothing.
 
-## 10. Do / Don't
+## 11. Do / Don't
 
 **Do:** derive every expected field value from the lock through the matrix
 row; prove declaration, manifest, and field fail-closed in both directions;
