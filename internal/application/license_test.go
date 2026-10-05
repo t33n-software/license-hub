@@ -2290,3 +2290,361 @@ func TestVerifyComposerCleanWithoutComposerSurfaces(t *testing.T) {
 		t.Fatalf("Verify() violations = %v", violations)
 	}
 }
+
+// --- Ruby ecosystem surfaces ---
+
+const rubySeam = `{"schemaVersion":4,"toolchain":{"language":"ruby","version":"4.0.0"}}`
+
+const exampleGemspec = "Gem::Specification.new do |spec|\n" +
+	"  spec.name = \"example-project\"\n" +
+	"  spec.license = \"MIT\"\n" +
+	"end\n"
+
+const alignedGemspec = "Gem::Specification.new do |spec|\n" +
+	"  spec.name = \"example-project\"\n" +
+	"  spec.license = \"LicenseRef-license-hub-NoRepublish-1.0\"\n" +
+	"end\n"
+
+var gemspecManifestPath = filepath.Join("out", "example.gemspec")
+
+func seedGemspecSurface(f *fakeFS, seam, name, manifest string) {
+	if seam != "" {
+		f.files[seamPath] = []byte(seam)
+	}
+	if manifest != "" {
+		f.files[filepath.Join("out", name)] = []byte(manifest)
+	}
+}
+
+func TestRenderAlignsTheDeclaredGemspecSurface(t *testing.T) {
+	f := seededFS(t)
+	seedGemspecSurface(f, rubySeam, "example.gemspec", exampleGemspec)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !slices.Equal(result.Aligned, []string{gemspecManifestPath}) {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	if len(result.Skipped) != 0 {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+	content := string(f.files[gemspecManifestPath])
+	if !strings.Contains(content, `spec.license = "LicenseRef-license-hub-NoRepublish-1.0"`) {
+		t.Fatalf("Render() manifest = %q", content)
+	}
+	if !strings.Contains(content, "spec.name = \"example-project\"") {
+		t.Fatalf("Render() touched a non-license assignment: %q", content)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderGemspecAlignmentIsIdempotent(t *testing.T) {
+	f := seededFS(t)
+	seedGemspecSurface(f, rubySeam, "example.gemspec", alignedGemspec)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+}
+
+func TestRenderGemspecArraySpellingIsAlignedWithoutChange(t *testing.T) {
+	f := seededFS(t)
+	seedGemspecSurface(f, rubySeam, "example.gemspec",
+		"Gem::Specification.new do |spec|\n  spec.licenses = [\"LicenseRef-license-hub-NoRepublish-1.0\"]\nend\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+}
+
+func TestRenderGemspecMissingAssignmentIsInserted(t *testing.T) {
+	f := seededFS(t)
+	seedGemspecSurface(f, rubySeam, "example.gemspec",
+		"Gem::Specification.new do |spec|\n  spec.name = \"example-project\"\nend\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !slices.Equal(result.Aligned, []string{gemspecManifestPath}) {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	content := string(f.files[gemspecManifestPath])
+	if !strings.Contains(content, `spec.license = "LicenseRef-license-hub-NoRepublish-1.0"`) {
+		t.Fatalf("Render() manifest = %q", content)
+	}
+	if !strings.Contains(content, "spec.name = \"example-project\"") {
+		t.Fatalf("Render() lost the original body: %q", content)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestPlanRenderPreviewsTheGemspecAlignment(t *testing.T) {
+	f := seededFS(t)
+	seedGemspecSurface(f, rubySeam, "example.gemspec", exampleGemspec)
+	service := NewLicenseService(f)
+	plan, err := service.PlanRender(renderRequest())
+	if err != nil {
+		t.Fatalf("PlanRender() error = %v", err)
+	}
+	if len(plan.Alignments) != 1 || !strings.Contains(plan.Alignments[0], gemspecManifestPath) {
+		t.Fatalf("PlanRender() alignments = %v", plan.Alignments)
+	}
+	if string(f.files[gemspecManifestPath]) != exampleGemspec {
+		t.Fatalf("PlanRender() mutated the manifest: %q", f.files[gemspecManifestPath])
+	}
+}
+
+func TestRenderSkipsTheAbsentDeclaredGemspecManifest(t *testing.T) {
+	f := seededFS(t)
+	seedGemspecSurface(f, rubySeam, "", "")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	if len(result.Skipped) != 1 || !strings.Contains(result.Skipped[0], "absent") {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "manifest missing") {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderWithoutDeclarationLeavesGemspecSurfacesUntouched(t *testing.T) {
+	f := seededFS(t)
+	seedGemspecSurface(f, "", "example.gemspec", exampleGemspec)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+}
+
+func TestRenderWithNonRubyDeclarationLeavesGemspecSurfacesUntouched(t *testing.T) {
+	f := seededFS(t)
+	seedGemspecSurface(f, goSeam, "example.gemspec", exampleGemspec)
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "without covering declaration") {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderRejectsAnInvalidGemspecSurface(t *testing.T) {
+	cases := []struct {
+		name         string
+		seam         string
+		manifestName string
+		manifest     string
+	}{
+		{"invalid seam", "{", "", ""},
+		{"malformed gemspec", rubySeam, "example.gemspec", "spec.license = \"MIT\n"},
+		{"multiple entries", rubySeam, "example.gemspec", "spec.licenses = [\"MIT\", \"Apache-2.0\"]\n"},
+		{"ambiguous assignments", rubySeam, "example.gemspec", "spec.license = \"MIT\"\nspec.licenses = [\"MIT\"]\n"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedGemspecSurface(f, testCase.seam, testCase.manifestName, testCase.manifest)
+			service := NewLicenseService(f)
+			_, err := service.Render(renderRequest())
+			if !errors.Is(err, ErrInvalidEcosystemSurface) {
+				t.Fatalf("Render() error = %v, want ErrInvalidEcosystemSurface", err)
+			}
+		})
+	}
+}
+
+func TestRenderReportsGemspecReadFailures(t *testing.T) {
+	cases := []struct {
+		name    string
+		blocked string
+		wantIs  error
+		wantErr string
+	}{
+		{"seam read failure", seamPath, os.ErrPermission, "read ecosystem declaration"},
+		{"manifest read failure", gemspecManifestPath, os.ErrPermission, "read gemspec manifest"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedGemspecSurface(f, rubySeam, "example.gemspec", exampleGemspec)
+			f.readErr[testCase.blocked] = testCase.wantIs
+			service := NewLicenseService(f)
+			_, err := service.Render(renderRequest())
+			if !errors.Is(err, testCase.wantIs) || !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Fatalf("Render() error = %v, want %v with %q", err, testCase.wantIs, testCase.wantErr)
+			}
+		})
+	}
+}
+
+func TestRenderReportsGemspecListingFailure(t *testing.T) {
+	f := seededFS(t)
+	seedGemspecSurface(f, rubySeam, "", "")
+	f.listErr["out"] = os.ErrPermission
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("Render() error = %v, want os.ErrPermission", err)
+	}
+}
+
+func TestRenderGemspecToleratesAMissingTargetDirectoryListing(t *testing.T) {
+	f := seededFS(t)
+	seedGemspecSurface(f, rubySeam, "", "")
+	f.listErr["out"] = os.ErrNotExist
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Skipped) != 1 || !strings.Contains(result.Skipped[0], "absent") {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+}
+
+func TestRenderGemspecAlignWriteError(t *testing.T) {
+	f := seededFS(t)
+	seedGemspecSurface(f, rubySeam, "example.gemspec", exampleGemspec)
+	f.writeErr[gemspecManifestPath] = fmt.Errorf("disk full")
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); err == nil {
+		t.Fatal("Render() expected gemspec manifest write error")
+	}
+}
+
+func TestPlanRenderSkipsTheAbsentDeclaredGemspecManifest(t *testing.T) {
+	f := seededFS(t)
+	seedGemspecSurface(f, rubySeam, "", "")
+	service := NewLicenseService(f)
+	plan, err := service.PlanRender(renderRequest())
+	if err != nil {
+		t.Fatalf("PlanRender() error = %v", err)
+	}
+	if len(plan.Skips) != 1 || !strings.Contains(plan.Skips[0], "absent") {
+		t.Fatalf("PlanRender() skips = %v", plan.Skips)
+	}
+	if len(plan.Alignments) != 0 {
+		t.Fatalf("PlanRender() alignments = %v", plan.Alignments)
+	}
+}
+
+func TestVerifyGemspecFindingsFailClosed(t *testing.T) {
+	cases := []struct {
+		name         string
+		seam         string
+		manifestName string
+		manifest     string
+		want         string
+	}{
+		{"diverging field", rubySeam, "example.gemspec", exampleGemspec, "diverges from the lock projection"},
+		{"diverging array spelling", rubySeam, "example.gemspec", "spec.licenses = [\"MIT\"]\n", "diverges from the lock projection"},
+		{"missing field", rubySeam, "example.gemspec", "Gem::Specification.new do |spec|\n  spec.name = \"x\"\nend\n", "license field is missing"},
+		{"invalid field", rubySeam, "example.gemspec", "spec.license = 7\n", "not a license expression string or array"},
+		{"multiple entries", rubySeam, "example.gemspec", "spec.licenses = [\"MIT\", \"Apache-2.0\"]\n", "multiple license entries"},
+		{"empty array", rubySeam, "example.gemspec", "spec.licenses = []\n", "cannot be proven"},
+		{"ambiguous assignments", rubySeam, "example.gemspec", "spec.license = \"MIT\"\nspec.licenses = [\"MIT\"]\n", "cannot be proven"},
+		{"unscannable manifest", rubySeam, "example.gemspec", "spec.license = \"MIT\n", "cannot be proven"},
+		{"shadow without declaration", "", "example.gemspec", exampleGemspec, "without covering declaration"},
+		{"shadow with other language", goSeam, "example.gemspec", exampleGemspec, "without covering declaration"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedGemspecSurface(f, testCase.seam, testCase.manifestName, testCase.manifest)
+			service := NewLicenseService(f)
+			violations, err := service.Verify(verifyRequest(""))
+			if err != nil {
+				t.Fatalf("Verify() error = %v", err)
+			}
+			found := false
+			for _, violation := range violations {
+				if strings.Contains(violation, testCase.want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("Verify() violations = %v, want %q", violations, testCase.want)
+			}
+		})
+	}
+}
+
+func TestVerifyReportsGemspecListingFailure(t *testing.T) {
+	f := seededFS(t)
+	seedGemspecSurface(f, rubySeam, "", "")
+	f.listErr["out"] = os.ErrPermission
+	service := NewLicenseService(f)
+	if _, err := service.Verify(verifyRequest("")); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("Verify() error = %v, want os.ErrPermission", err)
+	}
+}
+
+func TestVerifyReportsGemspecManifestReadFailure(t *testing.T) {
+	f := seededFS(t)
+	seedGemspecSurface(f, rubySeam, "example.gemspec", exampleGemspec)
+	f.readErr[gemspecManifestPath] = os.ErrPermission
+	service := NewLicenseService(f)
+	if _, err := service.Verify(verifyRequest("")); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("Verify() error = %v, want os.ErrPermission", err)
+	}
+}
+
+func TestVerifyGemspecCleanWithoutGemspecSurfaces(t *testing.T) {
+	f := seededFS(t)
+	seedGemspecSurface(f, goSeam, "", "")
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}

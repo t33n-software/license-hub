@@ -31,8 +31,12 @@ type.
    element and the `*.csproj` MSBuild pack properties, discovered in the
    render target directory); `composer` selects the composer.json surface
    (field `license`: an SPDX expression string or an array of SPDX
-   expressions; the `proprietary` form is the documented non-SPDX value);
-   Go selects no manifest field —
+expressions; the `proprietary` form is the documented non-SPDX value);
+    `ruby` selects the `*.gemspec` surface (the `spec.license` string
+    assignment or the value-equal `spec.licenses` array assignment; every
+    entry is a single SPDX identifier, `LicenseRef-<idstring>` is the
+    documented non-SPDX entry form, and entries are limited to 64
+    characters); Go selects no manifest field —
    the `LICENSE` file at the module root is the truth surface, and the
    adapter aligns nothing. Additional rows are grown content-driven when a
    consuming surface exists, with the field semantics verified against the
@@ -194,7 +198,47 @@ more than once is refused for the same reason, and the array scan refuses
 every non-string entry, the empty array, and every malformed delimiter form
 fail-closed.
 
-## 8. Render alignment discipline
+## 8. The Ruby alignment contract
+
+The Ruby row targets `*.gemspec` files. The license surface is the
+assignment pair `spec.license = "MIT"` (the singular string form) and
+`spec.licenses = ["MIT"]` (the plural array form) — two value-equal
+spellings of the same declaration — and every entry is a single SPDX
+identifier: compound expressions (for example `MIT OR Apache-2.0`) and
+entries beyond the 64-character limit are not supported per entry, and
+`LicenseRef-<idstring>` is the documented non-SPDX entry form. The manifest
+names are glob-form: the adapter discovers `*.gemspec` files in the render
+target directory and aligns every discovered file. The seam language token
+`ruby` selects the row.
+
+The bound organization projection: a declared `SPDX_LICENSE_IDENTIFIER`
+projects itself; the file-based custom family projects the SPDX sideload
+entry `LicenseRef-<LICENSE_ID>` (the tenant `LICENSE_ID` value). The
+projected form is the singular string assignment: a diverging string value
+is value-replaced, a diverging one-element array is normalized to the
+singular assignment with the observed receiver preserved, and the
+one-element array carrying the projected value is the value-equal
+alternative spelling. An array that declares more than one entry is refused
+fail-closed — the projection carries exactly one license family, and the
+resolution is an explicit tenant decision — and so is a file that declares
+the assignment more than once, in any mix of the two forms.
+
+The adapter's scanner lexes the file structurally and reads the license
+assignment sites strictly: line comments, string literals, percent
+literals, heredocs, and `=begin`/`=end` block comments are context, so a
+license assignment inside them is never observed, and a structural break
+anywhere — an unterminated string, percent literal, heredoc, or block
+comment — refuses the whole surface fail-closed. A license value must be an
+escape-free, interpolation-free string literal, a bracket array of such
+literals, or a `%w`/`%W` word array of such words; every other value form, a
+dynamic suffix other than `.freeze`, an empty array, and an assignment
+without a value are refused fail-closed. The insertion of a missing
+assignment is anchored at the first `Gem::Specification.new do |<receiver>|`
+block, uses the block parameter as the receiver and the block body's
+indentation, and is proven by a re-scan: an anchor that does not produce a
+provable assignment is refused fail-closed.
+
+## 9. Render alignment discipline
 
 The render is the sanctioned writer of tenant license surfaces, and the same
 governed act aligns the ecosystem license fields. Four disciplines bind
@@ -217,7 +261,7 @@ manifest is absent, and the dry-run plan previews the alignment without
 writing. A non-string license member or an unscannable manifest is refused
 fail-closed instead of being rewritten.
 
-## 9. Verification finding classes
+## 10. Verification finding classes
 
 Verification is fail-closed in both directions and yields exactly three
 finding classes:
@@ -237,9 +281,9 @@ finding classes:
 A diverging field is never adopted from the manifest into the lock; the
 correction direction is always lock → manifest through the render.
 
-## 10. Adapter set and growth rule
+## 11. Adapter set and growth rule
 
-The npm, Python, Rust, Maven, .NET, and Composer adapters are implemented. Every additional
+The npm, Python, Rust, Maven, .NET, Composer, and Ruby adapters are implemented. Every additional
 ecosystem adapter is born content-driven when a consuming project surface
 exists, and its matrix row records either the canonical field semantics
 (verified against the official ecosystem documentation at specification
@@ -247,7 +291,7 @@ time) or the explicit verdict that the ecosystem carries no manifest
 field — for those rows the file family is the declared truth and the
 adapter aligns nothing.
 
-## 11. Do / Don't
+## 12. Do / Don't
 
 **Do:** derive every expected field value from the lock through the matrix
 row; prove declaration, manifest, and field fail-closed in both directions;

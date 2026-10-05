@@ -67,6 +67,11 @@
         "package": "./internal/domain/ecosystem",
         "target": "FuzzAlignComposerLicense",
         "time": "50000x"
+      },
+      {
+        "package": "./internal/domain/ecosystem",
+        "target": "FuzzAlignGemspecLicense",
+        "time": "50000x"
       }
     ]
   }
