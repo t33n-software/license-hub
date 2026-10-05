@@ -26,3 +26,18 @@ func (s *System) WriteFile(path string, data []byte) error {
 	}
 	return os.WriteFile(path, data, 0o644)
 }
+
+// ListNames lists the non-directory entry names of a directory.
+func (s *System) ListNames(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	names := []string{}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			names = append(names, entry.Name())
+		}
+	}
+	return names, nil
+}

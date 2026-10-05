@@ -115,7 +115,7 @@ func InspectMavenLicense(content string) (MavenLicenseSurface, error) {
 // is refused fail-closed.
 func AlignMavenLicense(content string, form MavenLicenseForm) (string, bool, error) {
 	if !utf8.ValidString(form.Name) || !utf8.ValidString(form.URL) ||
-		!mavenRepresentable(form.Name) || !mavenRepresentable(form.URL) {
+		!xmlRepresentable(form.Name) || !xmlRepresentable(form.URL) {
 		return "", false, ErrInvalidTarget
 	}
 	surface, err := scanMavenPOM(content)
@@ -126,12 +126,10 @@ func AlignMavenLicense(content string, form MavenLicenseForm) (string, bool, err
 		return "", false, fmt.Errorf("%w: the document carries no project root", ErrInvalidMavenSurface)
 	}
 	if surface.licenses == nil {
-		block := "\n    <licenses>\n        <license>\n            <name>" + mavenEscape(form.Name) +
-			"</name>\n            <url>" + mavenEscape(form.URL) + "</url>\n        </license>\n    </licenses>"
+		block := "\n    <licenses>\n        <license>\n            <name>" + xmlEscape(form.Name) +
+			"</name>\n            <url>" + xmlEscape(form.URL) + "</url>\n        </license>\n    </licenses>"
 		if surface.projectSelfClosing {
-			open := strings.TrimSuffix(content[surface.projectTagStart:surface.projectEnd], "/>")
-			replacement := open + ">" + block + "</" + open[len("<"):] + ">"
-			return applySpanEdits(content, []spanEdit{{start: surface.projectTagStart, end: surface.projectEnd, text: replacement}}), true, nil
+			return applySpanEdits(content, []spanEdit{xmlExpansion(content, surface.projectTagStart, surface.projectEnd, block)}), true, nil
 		}
 		return applySpanEdits(content, []spanEdit{{start: surface.projectEnd, end: surface.projectEnd, text: block}}), true, nil
 	}
@@ -142,11 +140,11 @@ func AlignMavenLicense(content string, form MavenLicenseForm) (string, bool, err
 	edits := []spanEdit{}
 	switch {
 	case license == nil:
-		block := "\n        <license><name>" + mavenEscape(form.Name) + "</name><url>" +
-			mavenEscape(form.URL) + "</url></license>"
+		block := "\n        <license><name>" + xmlEscape(form.Name) + "</name><url>" +
+			xmlEscape(form.URL) + "</url></license>"
 		edits = append(edits, mavenInsertion(content, surface.licenses, block))
 	case license.name == nil && license.url == nil:
-		block := "<name>" + mavenEscape(form.Name) + "</name><url>" + mavenEscape(form.URL) + "</url>"
+		block := "<name>" + xmlEscape(form.Name) + "</name><url>" + xmlEscape(form.URL) + "</url>"
 		edits = append(edits, mavenInsertion(content, &license.mavenElement, block))
 	default:
 		edits = append(edits, mavenValueEdit(license.name, license.tagEnd, MavenNameElement, form.Name)...)
@@ -163,8 +161,7 @@ func AlignMavenLicense(content string, form MavenLicenseForm) (string, bool, err
 // block directly after its start tag.
 func mavenInsertion(content string, element *mavenElement, block string) spanEdit {
 	if element.selfClosing {
-		open := strings.TrimSuffix(content[element.tagStart:element.tagEnd], "/>")
-		return spanEdit{start: element.tagStart, end: element.tagEnd, text: open + ">" + block + "</" + open[len("<"):] + ">"}
+		return xmlExpansion(content, element.tagStart, element.tagEnd, block)
 	}
 	return spanEdit{start: element.tagEnd, end: element.tagEnd, text: block}
 }
@@ -173,7 +170,7 @@ func mavenInsertion(content string, element *mavenElement, block string) spanEdi
 // missing element is inserted after the license start tag, a self-closing
 // element is expanded, a diverging char-data span is replaced.
 func mavenValueEdit(value *mavenValue, insertAt int, elementName, target string) []spanEdit {
-	expanded := "<" + elementName + ">" + mavenEscape(target) + "</" + elementName + ">"
+	expanded := "<" + elementName + ">" + xmlEscape(target) + "</" + elementName + ">"
 	switch {
 	case value == nil:
 		return []spanEdit{{start: insertAt, end: insertAt, text: expanded}}
@@ -182,33 +179,8 @@ func mavenValueEdit(value *mavenValue, insertAt int, elementName, target string)
 	case value.text == target:
 		return nil
 	default:
-		return []spanEdit{{start: value.dataStart, end: value.dataEnd, text: mavenEscape(target)}}
+		return []spanEdit{{start: value.dataStart, end: value.dataEnd, text: xmlEscape(target)}}
 	}
-}
-
-// mavenEscape renders the XML-escaped char-data form of a target value. The
-// strings.Builder writer cannot fail, so the escape error is provably nil.
-func mavenEscape(value string) string {
-	var builder strings.Builder
-	_ = xml.EscapeText(&builder, []byte(value))
-	return builder.String()
-}
-
-// mavenRepresentable reports whether every rune of the value is
-// representable in XML char data; a value outside the XML character
-// classes cannot be projected faithfully and is refused fail-closed.
-func mavenRepresentable(value string) bool {
-	for _, r := range value {
-		switch {
-		case r == '\t' || r == '\n' || r == '\r':
-		case r >= 0x20 && r <= 0xD7FF:
-		case r >= 0xE000 && r <= 0xFFFD:
-		case r >= 0x10000 && r <= 0x10FFFF:
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 // mavenElement carries the byte spans of one skeleton element: the full
