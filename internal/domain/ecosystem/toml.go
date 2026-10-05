@@ -598,17 +598,18 @@ func skipTOMLComment(content string, i int) int {
 	return i
 }
 
-// tomlEdit carries one byte-span replacement or insertion.
-type tomlEdit struct {
+// spanEdit carries one byte-span replacement or insertion. It is the
+// package-shared byte-surgery primitive of the ecosystem adapters.
+type spanEdit struct {
 	start int
 	end   int
 	text  string
 }
 
-// applyTOMLEdits applies the edits from the highest offset down so the
+// applySpanEdits applies the edits from the highest offset down so the
 // earlier spans stay valid.
-func applyTOMLEdits(content string, edits []tomlEdit) string {
-	slices.SortFunc(edits, func(a, b tomlEdit) int { return b.start - a.start })
+func applySpanEdits(content string, edits []spanEdit) string {
+	slices.SortFunc(edits, func(a, b spanEdit) int { return b.start - a.start })
 	result := content
 	for _, edit := range edits {
 		result = result[:edit.start] + edit.text + result[edit.end:]
@@ -616,14 +617,14 @@ func applyTOMLEdits(content string, edits []tomlEdit) string {
 	return result
 }
 
-// tomlLineInsertion builds a whole-line insertion at offset; a position that
+// spanLineInsertion builds a whole-line insertion at offset; a position that
 // does not follow a newline gets one so the inserted lines start on their
 // own line.
-func tomlLineInsertion(content string, offset int, text string) tomlEdit {
+func spanLineInsertion(content string, offset int, text string) spanEdit {
 	if offset > 0 && offset <= len(content) && content[offset-1] != '\n' {
 		text = "\n" + text
 	}
-	return tomlEdit{start: offset, end: offset, text: text}
+	return spanEdit{start: offset, end: offset, text: text}
 }
 
 // tomlQuote renders a TOML basic string.

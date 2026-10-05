@@ -1357,3 +1357,258 @@ func TestVerifyCargoCleanWithoutCargoSurfaces(t *testing.T) {
 		t.Fatalf("Verify() violations = %v", violations)
 	}
 }
+
+// --- Maven ecosystem surfaces ---
+
+const mavenSeam = `{"schemaVersion":4,"toolchain":{"language":"maven","version":"4.0.0"}}`
+
+var mavenManifestPath = filepath.Join("out", "pom.xml")
+
+func seedMavenSurface(f *fakeFS, seam, manifest string) {
+	if seam != "" {
+		f.files[seamPath] = []byte(seam)
+	}
+	if manifest != "" {
+		f.files[mavenManifestPath] = []byte(manifest)
+	}
+}
+
+func TestRenderAlignsTheDeclaredMavenSurface(t *testing.T) {
+	f := seededFS(t)
+	seedMavenSurface(f, mavenSeam, "<project>\n    <modelVersion>4.0.0</modelVersion>\n</project>\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if !slices.Equal(result.Aligned, []string{mavenManifestPath}) {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	if len(result.Skipped) != 0 {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+	content := string(f.files[mavenManifestPath])
+	if !strings.Contains(content, "<name>license-hub-NoRepublish-1.0</name>") || !strings.Contains(content, "<url>https://github.com/t33n-software/license-hub</url>") {
+		t.Fatalf("Render() manifest = %q", content)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderMavenAlignmentIsIdempotent(t *testing.T) {
+	f := seededFS(t)
+	seedMavenSurface(f, mavenSeam, "<project>\n    <licenses>\n        <license>\n            <name>license-hub-NoRepublish-1.0</name>\n            <url>https://github.com/t33n-software/license-hub</url>\n        </license>\n    </licenses>\n</project>\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+}
+
+func TestPlanRenderPreviewsTheMavenAlignment(t *testing.T) {
+	f := seededFS(t)
+	seedMavenSurface(f, mavenSeam, "<project>\n    <licenses>\n        <license>\n            <name>MIT</name>\n        </license>\n    </licenses>\n</project>\n")
+	service := NewLicenseService(f)
+	plan, err := service.PlanRender(renderRequest())
+	if err != nil {
+		t.Fatalf("PlanRender() error = %v", err)
+	}
+	if len(plan.Alignments) != 1 || !strings.Contains(plan.Alignments[0], mavenManifestPath) {
+		t.Fatalf("PlanRender() alignments = %v", plan.Alignments)
+	}
+	if !strings.Contains(string(f.files[mavenManifestPath]), "<name>MIT</name>") {
+		t.Fatalf("PlanRender() mutated the manifest: %q", f.files[mavenManifestPath])
+	}
+}
+
+func TestRenderSkipsTheAbsentDeclaredMavenManifest(t *testing.T) {
+	f := seededFS(t)
+	seedMavenSurface(f, mavenSeam, "")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 {
+		t.Fatalf("Render() aligned = %v", result.Aligned)
+	}
+	if len(result.Skipped) != 1 || !strings.Contains(result.Skipped[0], "absent") {
+		t.Fatalf("Render() skipped = %v", result.Skipped)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "manifest missing") {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderWithoutDeclarationLeavesMavenSurfacesUntouched(t *testing.T) {
+	f := seededFS(t)
+	seedMavenSurface(f, "", "<project>\n    <licenses>\n        <license>\n            <name>MIT</name>\n        </license>\n    </licenses>\n</project>\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+}
+
+func TestRenderWithNonMavenDeclarationLeavesMavenSurfacesUntouched(t *testing.T) {
+	f := seededFS(t)
+	seedMavenSurface(f, goSeam, "<project>\n    <licenses>\n        <license>\n            <name>MIT</name>\n        </license>\n    </licenses>\n</project>\n")
+	service := NewLicenseService(f)
+	result, err := service.Render(renderRequest())
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if len(result.Aligned) != 0 || len(result.Skipped) != 0 {
+		t.Fatalf("Render() aligned = %v, skipped = %v", result.Aligned, result.Skipped)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "without covering declaration") {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}
+
+func TestRenderRejectsAnInvalidMavenSurface(t *testing.T) {
+	cases := []struct {
+		name     string
+		seam     string
+		manifest string
+	}{
+		{"invalid seam", "{", ""},
+		{"invalid manifest", mavenSeam, "<project>\n    <licenses>\n"},
+		{"multiple license elements", mavenSeam, "<project>\n    <licenses>\n        <license>\n            <name>MIT</name>\n        </license>\n        <license/>\n    </licenses>\n</project>\n"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedMavenSurface(f, testCase.seam, testCase.manifest)
+			service := NewLicenseService(f)
+			_, err := service.Render(renderRequest())
+			if !errors.Is(err, ErrInvalidEcosystemSurface) {
+				t.Fatalf("Render() error = %v, want ErrInvalidEcosystemSurface", err)
+			}
+		})
+	}
+}
+
+func TestRenderReportsMavenReadFailures(t *testing.T) {
+	cases := []struct {
+		name    string
+		blocked string
+		wantIs  error
+		wantErr string
+	}{
+		{"seam read failure", seamPath, os.ErrPermission, "read ecosystem declaration"},
+		{"manifest read failure", mavenManifestPath, os.ErrPermission, "read maven manifest"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedMavenSurface(f, mavenSeam, "<project>\n</project>\n")
+			f.readErr[testCase.blocked] = testCase.wantIs
+			service := NewLicenseService(f)
+			_, err := service.Render(renderRequest())
+			if !errors.Is(err, testCase.wantIs) || !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Fatalf("Render() error = %v, want %v with %q", err, testCase.wantIs, testCase.wantErr)
+			}
+		})
+	}
+}
+
+func TestRenderMavenAlignWriteError(t *testing.T) {
+	f := seededFS(t)
+	seedMavenSurface(f, mavenSeam, "<project>\n</project>\n")
+	f.writeErr[mavenManifestPath] = fmt.Errorf("disk full")
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); err == nil {
+		t.Fatal("Render() expected maven manifest write error")
+	}
+}
+
+func TestPlanRenderSkipsTheAbsentDeclaredMavenManifest(t *testing.T) {
+	f := seededFS(t)
+	seedMavenSurface(f, mavenSeam, "")
+	service := NewLicenseService(f)
+	plan, err := service.PlanRender(renderRequest())
+	if err != nil {
+		t.Fatalf("PlanRender() error = %v", err)
+	}
+	if len(plan.Skips) != 1 || !strings.Contains(plan.Skips[0], "absent") {
+		t.Fatalf("PlanRender() skips = %v", plan.Skips)
+	}
+	if len(plan.Alignments) != 0 {
+		t.Fatalf("PlanRender() alignments = %v", plan.Alignments)
+	}
+}
+
+func TestVerifyMavenFindingsFailClosed(t *testing.T) {
+	cases := []struct {
+		name     string
+		seam     string
+		manifest string
+		want     string
+	}{
+		{"licenses missing", mavenSeam, "<project>\n</project>\n", "licenses element is missing"},
+		{"multiple license elements", mavenSeam, "<project>\n    <licenses>\n        <license>\n            <name>MIT</name>\n        </license>\n        <license/>\n    </licenses>\n</project>\n", "multiple license elements"},
+		{"name missing", mavenSeam, "<project>\n    <licenses>\n        <license>\n            <url>https://example.org</url>\n        </license>\n    </licenses>\n</project>\n", "name element is missing"},
+		{"name diverging", mavenSeam, "<project>\n    <licenses>\n        <license>\n            <name>MIT</name>\n        </license>\n    </licenses>\n</project>\n", "name diverges from the lock projection"},
+		{"url missing", mavenSeam, "<project>\n    <licenses>\n        <license>\n            <name>license-hub-NoRepublish-1.0</name>\n        </license>\n    </licenses>\n</project>\n", "url element is missing"},
+		{"url diverging", mavenSeam, "<project>\n    <licenses>\n        <license>\n            <name>license-hub-NoRepublish-1.0</name>\n            <url>https://example.org</url>\n        </license>\n    </licenses>\n</project>\n", "url diverges from the lock projection"},
+		{"unscannable manifest", mavenSeam, "<project>\n    <licenses>\n", "cannot be proven"},
+		{"shadow without declaration", "", "<project>\n    <licenses>\n        <license>\n            <name>MIT</name>\n        </license>\n    </licenses>\n</project>\n", "without covering declaration"},
+		{"shadow with other language", goSeam, "<project>\n    <licenses>\n        <license>\n            <name>MIT</name>\n        </license>\n    </licenses>\n</project>\n", "without covering declaration"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			f := seededFS(t)
+			seedMavenSurface(f, testCase.seam, testCase.manifest)
+			service := NewLicenseService(f)
+			violations, err := service.Verify(verifyRequest(""))
+			if err != nil {
+				t.Fatalf("Verify() error = %v", err)
+			}
+			found := false
+			for _, violation := range violations {
+				if strings.Contains(violation, testCase.want) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("Verify() violations = %v, want %q", violations, testCase.want)
+			}
+		})
+	}
+}
+
+func TestVerifyMavenCleanWithoutMavenSurfaces(t *testing.T) {
+	f := seededFS(t)
+	seedMavenSurface(f, goSeam, "")
+	service := NewLicenseService(f)
+	if _, err := service.Render(renderRequest()); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	violations, err := service.Verify(verifyRequest(""))
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("Verify() violations = %v", violations)
+	}
+}

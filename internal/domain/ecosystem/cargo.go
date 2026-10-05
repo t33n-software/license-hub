@@ -188,7 +188,7 @@ func AlignCargoLicense(content string, form CargoLicenseForm) (string, bool, err
 		return replaceCargoKey(content, licenseFile, form), true, nil
 	default:
 		insertion := form.String() + "\n"
-		return applyTOMLEdits(content, []tomlEdit{tomlLineInsertion(content, surface.headerEnd, insertion)}), true, nil
+		return applySpanEdits(content, []spanEdit{spanLineInsertion(content, surface.headerEnd, insertion)}), true, nil
 	}
 }
 
