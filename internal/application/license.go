@@ -82,6 +82,7 @@ type preparedRender struct {
 	targets  []string
 	npm      *ecosystemAlignment
 	python   *ecosystemAlignment
+	cargo    *ecosystemAlignment
 }
 
 // ecosystemAlignment carries the prepared ecosystem license-field alignment
@@ -122,6 +123,15 @@ var pythonRenderRow = ecosystemRenderRow{
 	},
 }
 
+var cargoRenderRow = ecosystemRenderRow{
+	language:      ecosystem.CargoLanguage,
+	manifestName:  ecosystem.CargoManifestName,
+	manifestLabel: "cargo manifest",
+	align: func(content string, merged map[string]string) (string, bool, error) {
+		return ecosystem.AlignCargoLicense(content, ecosystem.CargoProjection(merged))
+	},
+}
+
 // prepare reads and validates every input of a render without writing
 // anything.
 func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
@@ -145,12 +155,17 @@ func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
 	if err != nil {
 		return preparedRender{}, err
 	}
+	cargo, err := s.prepareEcosystemAlignment(req, merged, cargoRenderRow)
+	if err != nil {
+		return preparedRender{}, err
+	}
 	return preparedRender{
 		content:  content,
 		template: template,
 		targets:  instancePaths(req.OutDir, merged),
 		npm:      npm,
 		python:   python,
+		cargo:    cargo,
 	}, nil
 }
 
@@ -168,7 +183,7 @@ func (s *LicenseService) Render(req RenderRequest) (RenderResult, error) {
 		}
 	}
 	result := RenderResult{Written: prepared.targets, Digest: digest.SHA256(prepared.template)}
-	for _, alignment := range []*ecosystemAlignment{prepared.npm, prepared.python} {
+	for _, alignment := range []*ecosystemAlignment{prepared.npm, prepared.python, prepared.cargo} {
 		if err := s.writeAlignment(alignment, &result); err != nil {
 			return RenderResult{}, err
 		}
@@ -215,7 +230,7 @@ func (s *LicenseService) PlanRender(req RenderRequest) (PlanResult, error) {
 		return PlanResult{}, err
 	}
 	plan := PlanResult{Targets: prepared.targets, Digest: digest.SHA256(prepared.template)}
-	for _, alignment := range []*ecosystemAlignment{prepared.npm, prepared.python} {
+	for _, alignment := range []*ecosystemAlignment{prepared.npm, prepared.python, prepared.cargo} {
 		planAlignment(alignment, &plan)
 	}
 	return plan, nil
@@ -279,7 +294,7 @@ func (s *LicenseService) Verify(req VerifyRequest) ([]string, error) {
 			violations = append(violations, "rendered file drifted from canonical render: "+target)
 		}
 	}
-	for _, row := range []ecosystemVerifyRow{npmVerifyRow, pythonVerifyRow} {
+	for _, row := range []ecosystemVerifyRow{npmVerifyRow, pythonVerifyRow, cargoVerifyRow} {
 		rowViolations, err := s.verifyEcosystem(req, merged, row)
 		if err != nil {
 			return nil, err
@@ -360,6 +375,13 @@ var pythonVerifyRow = ecosystemVerifyRow{
 	manifestName: ecosystem.PythonManifestName,
 	label:        "python",
 	findings:     pythonFindings,
+}
+
+var cargoVerifyRow = ecosystemVerifyRow{
+	language:     ecosystem.CargoLanguage,
+	manifestName: ecosystem.CargoManifestName,
+	label:        "cargo",
+	findings:     cargoFindings,
 }
 
 // verifyEcosystem proves one declared ecosystem surface fail-closed in both
@@ -469,6 +491,33 @@ func pythonFindings(content, manifestPath string, merged map[string]string) []st
 			"pyproject.toml carries the deprecated License :: classifiers: %s (%d entries; removal is an explicit tenant decision)",
 			manifestPath, len(surface.DeprecatedClassifiers),
 		))
+	}
+	return violations
+}
+
+// cargoFindings derives the Rust license-surface findings from the inspected
+// manifest and the lock projection: the declared form (the exclusive
+// license keys), its value, and the fail-closed proof state.
+func cargoFindings(content, manifestPath string, merged map[string]string) []string {
+	form := ecosystem.CargoProjection(merged)
+	surface, err := ecosystem.InspectCargoLicense(content)
+	if err != nil {
+		return []string{"cargo license surface cannot be proven: " + manifestPath + " (" + err.Error() + ")"}
+	}
+	violations := []string{}
+	switch surface.State {
+	case ecosystem.CargoLicenseMissing:
+		violations = append(violations, "cargo license field is missing: "+manifestPath+" (expected "+form.String()+")")
+	case ecosystem.CargoLicenseInvalid:
+		violations = append(violations, "cargo license field is not a license expression string: "+manifestPath+" (expected "+form.String()+")")
+	case ecosystem.CargoLicenseExpression:
+		if form.Field != ecosystem.CargoLicenseField || surface.Value != form.Value {
+			violations = append(violations, "cargo license field diverges from the lock projection: observed "+ecosystem.CargoLicenseField+" = \""+surface.Value+"\", expected "+form.String()+" (run the render to align)")
+		}
+	case ecosystem.CargoLicenseFileForm:
+		if form.Field != ecosystem.CargoLicenseFileKey || surface.Value != form.Value {
+			violations = append(violations, "cargo license field diverges from the lock projection: observed "+ecosystem.CargoLicenseFileKey+" = \""+surface.Value+"\", expected "+form.String()+" (run the render to align)")
+		}
 	}
 	return violations
 }

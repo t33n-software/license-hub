@@ -38,8 +38,9 @@ const pythonClassifierPrefix = "License ::"
 // canonical license text at the repository root.
 var PythonLicenseFilesTarget = []string{"LICENSE"}
 
-// ErrInvalidPythonSurface marks a manifest that is not a scannable
-// pyproject.toml surface.
+// ErrInvalidPythonSurface marks a manifest whose dotted-key forms would
+// create or shadow the license surface outside the canonical [project]
+// table.
 var ErrInvalidPythonSurface = errors.New("invalid pyproject.toml surface")
 
 // ErrAmbiguousPythonField marks a [project] table that declares a
@@ -108,7 +109,7 @@ func PythonProjection(merged map[string]string) string {
 // PythonLicenseFilesForm renders a license-files glob list in its manifest
 // form.
 func PythonLicenseFilesForm(files []string) string {
-	return pythonArray(files)
+	return tomlStringArray(files)
 }
 
 // InspectPythonLicense parses a pyproject.toml manifest and classifies its
@@ -125,10 +126,10 @@ func InspectPythonLicense(content string) (PythonLicenseSurface, error) {
 	}
 	if key := surface.license; key != nil {
 		switch key.kind {
-		case pythonValueString:
+		case tomlValueString:
 			result.State = PythonLicenseString
 			result.Value = key.str
-		case pythonValueInlineTable:
+		case tomlValueInlineTable:
 			result.State = PythonLicenseTable
 		default:
 			result.State = PythonLicenseInvalid
@@ -136,7 +137,7 @@ func InspectPythonLicense(content string) (PythonLicenseSurface, error) {
 	}
 	if key := surface.licenseFiles; key != nil {
 		result.LicenseFilesSet = true
-		if key.kind == pythonValueArray {
+		if key.kind == tomlValueArray {
 			result.LicenseFilesValid = true
 			for _, item := range key.items {
 				if !item.isString {
@@ -148,7 +149,7 @@ func InspectPythonLicense(content string) (PythonLicenseSurface, error) {
 			}
 		}
 	}
-	if key := surface.classifiers; key != nil && key.kind == pythonValueArray {
+	if key := surface.classifiers; key != nil && key.kind == tomlValueArray {
 		for _, item := range key.items {
 			if item.isString && strings.HasPrefix(item.decoded, pythonClassifierPrefix) {
 				result.DeprecatedClassifiers = append(result.DeprecatedClassifiers, item.decoded)
@@ -181,23 +182,23 @@ func AlignPythonLicense(content, target string, files []string) (string, bool, e
 	if surface == nil {
 		return "", false, ErrNoProjectTable
 	}
-	edits := []pythonEdit{}
+	edits := []tomlEdit{}
 	switch {
 	case surface.license == nil:
 		// The insertion cases below carry the license field.
-	case surface.license.kind == pythonValueString:
+	case surface.license.kind == tomlValueString:
 		if surface.license.str != target {
-			edits = append(edits, pythonEdit{
+			edits = append(edits, tomlEdit{
 				start: surface.license.valueStart,
 				end:   surface.license.valueEnd,
-				text:  pythonQuote(target),
+				text:  tomlQuote(target),
 			})
 		}
-	case surface.license.kind == pythonValueInlineTable:
-		edits = append(edits, pythonEdit{
+	case surface.license.kind == tomlValueInlineTable:
+		edits = append(edits, tomlEdit{
 			start: surface.license.valueStart,
 			end:   surface.license.valueEnd,
-			text:  pythonQuote(target),
+			text:  tomlQuote(target),
 		})
 	default:
 		return "", false, ErrInvalidPythonLicenseValue
@@ -205,7 +206,7 @@ func AlignPythonLicense(content, target string, files []string) (string, bool, e
 	switch {
 	case surface.licenseFiles == nil:
 		// The insertion cases below carry the license-files field.
-	case surface.licenseFiles.kind != pythonValueArray:
+	case surface.licenseFiles.kind != tomlValueArray:
 		return "", false, ErrInvalidPythonLicenseFiles
 	default:
 		observed := []string{}
@@ -216,144 +217,36 @@ func AlignPythonLicense(content, target string, files []string) (string, bool, e
 			observed = append(observed, item.decoded)
 		}
 		if !slices.Equal(observed, files) {
-			edits = append(edits, pythonEdit{
+			edits = append(edits, tomlEdit{
 				start: surface.licenseFiles.valueStart,
 				end:   surface.licenseFiles.valueEnd,
-				text:  pythonArray(files),
+				text:  tomlStringArray(files),
 			})
 		}
 	}
 	switch {
 	case surface.license == nil && surface.licenseFiles == nil:
-		edits = append(edits, pythonLineInsertion(content, surface.headerEnd,
-			"license = "+pythonQuote(target)+"\nlicense-files = "+pythonArray(files)+"\n"))
+		edits = append(edits, tomlLineInsertion(content, surface.headerEnd,
+			"license = "+tomlQuote(target)+"\nlicense-files = "+tomlStringArray(files)+"\n"))
 	case surface.license == nil:
-		edits = append(edits, pythonLineInsertion(content, surface.headerEnd,
-			"license = "+pythonQuote(target)+"\n"))
+		edits = append(edits, tomlLineInsertion(content, surface.headerEnd,
+			"license = "+tomlQuote(target)+"\n"))
 	case surface.licenseFiles == nil:
-		edits = append(edits, pythonLineInsertion(content, surface.license.lineEnd,
-			"license-files = "+pythonArray(files)+"\n"))
+		edits = append(edits, tomlLineInsertion(content, surface.license.lineEnd,
+			"license-files = "+tomlStringArray(files)+"\n"))
 	}
 	if len(edits) == 0 {
 		return content, false, nil
 	}
-	return applyPythonEdits(content, edits), true, nil
-}
-
-// pythonEdit carries one byte-span replacement or insertion.
-type pythonEdit struct {
-	start int
-	end   int
-	text  string
-}
-
-// applyPythonEdits applies the edits from the highest offset down so the
-// earlier spans stay valid.
-func applyPythonEdits(content string, edits []pythonEdit) string {
-	slices.SortFunc(edits, func(a, b pythonEdit) int { return b.start - a.start })
-	result := content
-	for _, edit := range edits {
-		result = result[:edit.start] + edit.text + result[edit.end:]
-	}
-	return result
-}
-
-// pythonLineInsertion builds a whole-line insertion at offset; a position
-// that does not follow a newline gets one so the inserted lines start on
-// their own line.
-func pythonLineInsertion(content string, offset int, text string) pythonEdit {
-	if offset > 0 && offset <= len(content) && content[offset-1] != '\n' {
-		text = "\n" + text
-	}
-	return pythonEdit{start: offset, end: offset, text: text}
-}
-
-// pythonQuote renders a TOML basic string.
-func pythonQuote(value string) string {
-	var builder strings.Builder
-	builder.WriteByte('"')
-	for _, r := range value {
-		switch r {
-		case '"':
-			builder.WriteString(`\"`)
-		case '\\':
-			builder.WriteString(`\\`)
-		case '\b':
-			builder.WriteString(`\b`)
-		case '\t':
-			builder.WriteString(`\t`)
-		case '\n':
-			builder.WriteString(`\n`)
-		case '\f':
-			builder.WriteString(`\f`)
-		case '\r':
-			builder.WriteString(`\r`)
-		default:
-			if r < 0x20 {
-				builder.WriteString(fmt.Sprintf(`\u%04X`, r))
-			} else {
-				builder.WriteRune(r)
-			}
-		}
-	}
-	builder.WriteByte('"')
-	return builder.String()
-}
-
-// pythonArray renders a TOML array of strings.
-func pythonArray(items []string) string {
-	quoted := make([]string, 0, len(items))
-	for _, item := range items {
-		quoted = append(quoted, pythonQuote(item))
-	}
-	return "[" + strings.Join(quoted, ", ") + "]"
-}
-
-type pythonValueKind int
-
-const (
-	pythonValueString pythonValueKind = iota
-	pythonValueArray
-	pythonValueInlineTable
-	pythonValueAtom
-)
-
-type pythonArrayItem struct {
-	isString bool
-	decoded  string
-}
-
-type pythonValue struct {
-	kind  pythonValueKind
-	str   string
-	items []pythonArrayItem
-}
-
-type pythonKeyValue struct {
-	key        string
-	segments   []string
-	valueStart int
-	valueEnd   int
-	lineEnd    int // the index just past the key's line terminator
-	kind       pythonValueKind
-	str        string
-	items      []pythonArrayItem
-}
-
-type pythonTable struct {
-	name      string
-	array     bool
-	start     int
-	headerEnd int // the index just past the header line terminator
-	keys      []pythonKeyValue
+	return applyTOMLEdits(content, edits), true, nil
 }
 
 type pythonProjectSurface struct {
 	start        int
 	headerEnd    int
-	license      *pythonKeyValue
-	licenseFiles *pythonKeyValue
-	classifiers  *pythonKeyValue
+	license      *tomlKeyValue
+	licenseFiles *tomlKeyValue
+	classifiers  *tomlKeyValue
 }
 
 // scanPythonProject lexes a pyproject.toml document and returns the
@@ -361,7 +254,7 @@ type pythonProjectSurface struct {
 // [project] table returns a nil surface; a document the scanner cannot
 // interpret structurally is refused fail-closed.
 func scanPythonProject(content string) (*pythonProjectSurface, error) {
-	tables, err := scanPythonDocument(content)
+	tables, err := scanTOMLDocument(content, checkPythonKey)
 	if err != nil {
 		return nil, err
 	}
@@ -386,49 +279,11 @@ func scanPythonProject(content string) (*pythonProjectSurface, error) {
 	return nil, nil
 }
 
-// scanPythonDocument lexes the table skeleton of a TOML document: every
-// table header, every key, and the value form of every key. The scanner is
-// the contract surface of the adapter; it refuses every form it cannot
-// interpret instead of silently misreading it.
-func scanPythonDocument(content string) ([]*pythonTable, error) {
-	tables := []*pythonTable{}
-	defined := map[string]bool{}
-	current := &pythonTable{name: ""}
-	tables = append(tables, current)
-	i := 0
-	for i < len(content) {
-		i = skipPythonBlank(content, i)
-		if i >= len(content) {
-			break
-		}
-		if content[i] == '[' {
-			table, next, err := parsePythonHeader(content, i, defined)
-			if err != nil {
-				return nil, err
-			}
-			tables = append(tables, table)
-			current = table
-			i = next
-			continue
-		}
-		key, next, err := parsePythonKeyValue(content, i)
-		if err != nil {
-			return nil, err
-		}
-		if err := checkPythonKey(current, key); err != nil {
-			return nil, err
-		}
-		current.keys = append(current.keys, *key)
-		i = next
-	}
-	return tables, nil
-}
-
 // checkPythonKey refuses the duplicate and shadow forms the scanner cannot
 // interpret: a repeated key inside one table, a dotted key inside [project]
 // whose first segment names a license-relevant key, and any root
 // declaration of the project name itself.
-func checkPythonKey(table *pythonTable, key *pythonKeyValue) error {
+func checkPythonKey(table *tomlTable, key *tomlKeyValue) error {
 	for _, existing := range table.keys {
 		if existing.key == key.key {
 			return fmt.Errorf("%w: duplicate key %q in [%s]", ErrAmbiguousPythonField, key.key, table.name)
@@ -445,478 +300,4 @@ func checkPythonKey(table *pythonTable, key *pythonKeyValue) error {
 		return fmt.Errorf("%w: the project table must be declared with the [project] header", ErrInvalidPythonSurface)
 	}
 	return nil
-}
-
-func parsePythonHeader(content string, start int, defined map[string]bool) (*pythonTable, int, error) {
-	i := start + 1
-	array := false
-	if i < len(content) && content[i] == '[' {
-		array = true
-		i++
-	}
-	segments := []string{}
-	for {
-		i = skipPythonSpaces(content, i)
-		segment, next, err := parsePythonKeySegment(content, i)
-		if err != nil {
-			return nil, 0, err
-		}
-		segments = append(segments, segment)
-		i = skipPythonSpaces(content, next)
-		if i < len(content) && content[i] == '.' {
-			i++
-			continue
-		}
-		break
-	}
-	if i >= len(content) || content[i] != ']' {
-		return nil, 0, fmt.Errorf("%w: malformed table header", ErrInvalidPythonSurface)
-	}
-	i++
-	if array {
-		if i >= len(content) || content[i] != ']' {
-			return nil, 0, fmt.Errorf("%w: malformed array table header", ErrInvalidPythonSurface)
-		}
-		i++
-	}
-	i = skipPythonSpaces(content, i)
-	if i < len(content) && content[i] == '#' {
-		i = skipPythonComment(content, i)
-	}
-	table := &pythonTable{name: strings.Join(segments, "."), array: array, start: start}
-	switch {
-	case i >= len(content):
-		table.headerEnd = len(content)
-	case content[i] == '\n':
-		table.headerEnd = i + 1
-		i++
-	case content[i] == '\r' && i+1 < len(content) && content[i+1] == '\n':
-		table.headerEnd = i + 2
-		i += 2
-	default:
-		return nil, 0, fmt.Errorf("%w: trailing content after the table header", ErrInvalidPythonSurface)
-	}
-	if !array {
-		if defined[table.name] {
-			return nil, 0, fmt.Errorf("%w: duplicate table [%s]", ErrInvalidPythonSurface, table.name)
-		}
-		defined[table.name] = true
-	}
-	return table, i, nil
-}
-
-func parsePythonKeyValue(content string, start int) (*pythonKeyValue, int, error) {
-	i := start
-	segments := []string{}
-	for {
-		i = skipPythonSpaces(content, i)
-		segment, next, err := parsePythonKeySegment(content, i)
-		if err != nil {
-			return nil, 0, err
-		}
-		segments = append(segments, segment)
-		i = skipPythonSpaces(content, next)
-		if i < len(content) && content[i] == '.' {
-			i++
-			continue
-		}
-		break
-	}
-	name := strings.Join(segments, ".")
-	if i >= len(content) || content[i] != '=' {
-		return nil, 0, fmt.Errorf("%w: expected '=' after the key %q", ErrInvalidPythonSurface, name)
-	}
-	i = skipPythonSpaces(content, i+1)
-	valueStart := i
-	value, valueEnd, err := parsePythonValue(content, i)
-	if err != nil {
-		return nil, 0, err
-	}
-	i = skipPythonSpaces(content, valueEnd)
-	if i < len(content) && content[i] == '#' {
-		i = skipPythonComment(content, i)
-	}
-	lineEnd := i
-	switch {
-	case i >= len(content):
-	case content[i] == '\n':
-		i++
-		lineEnd = i
-	case content[i] == '\r' && i+1 < len(content) && content[i+1] == '\n':
-		i += 2
-		lineEnd = i
-	default:
-		return nil, 0, fmt.Errorf("%w: trailing content after the value of %q", ErrInvalidPythonSurface, name)
-	}
-	return &pythonKeyValue{
-		key:        name,
-		segments:   segments,
-		valueStart: valueStart,
-		valueEnd:   valueEnd,
-		lineEnd:    lineEnd,
-		kind:       value.kind,
-		str:        value.str,
-		items:      value.items,
-	}, i, nil
-}
-
-func parsePythonKeySegment(content string, start int) (string, int, error) {
-	if start >= len(content) {
-		return "", 0, fmt.Errorf("%w: expected a key", ErrInvalidPythonSurface)
-	}
-	switch content[start] {
-	case '"':
-		decoded, end, err := lexBasicString(content, start)
-		if err != nil {
-			return "", 0, err
-		}
-		return decoded, end, nil
-	case '\'':
-		decoded, end, err := lexLiteralString(content, start)
-		if err != nil {
-			return "", 0, err
-		}
-		return decoded, end, nil
-	}
-	i := start
-	for i < len(content) && isPythonBareKeyByte(content[i]) {
-		i++
-	}
-	if i == start {
-		return "", 0, fmt.Errorf("%w: expected a key", ErrInvalidPythonSurface)
-	}
-	return content[start:i], i, nil
-}
-
-func isPythonBareKeyByte(c byte) bool {
-	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-'
-}
-
-func parsePythonValue(content string, start int) (pythonValue, int, error) {
-	if start >= len(content) {
-		return pythonValue{}, 0, fmt.Errorf("%w: expected a value", ErrInvalidPythonSurface)
-	}
-	switch content[start] {
-	case '"':
-		if strings.HasPrefix(content[start:], `"""`) {
-			decoded, end, err := lexMultilineBasicString(content, start)
-			if err != nil {
-				return pythonValue{}, 0, err
-			}
-			return pythonValue{kind: pythonValueString, str: decoded}, end, nil
-		}
-		decoded, end, err := lexBasicString(content, start)
-		if err != nil {
-			return pythonValue{}, 0, err
-		}
-		return pythonValue{kind: pythonValueString, str: decoded}, end, nil
-	case '\'':
-		if strings.HasPrefix(content[start:], `'''`) {
-			decoded, end, err := lexMultilineLiteralString(content, start)
-			if err != nil {
-				return pythonValue{}, 0, err
-			}
-			return pythonValue{kind: pythonValueString, str: decoded}, end, nil
-		}
-		decoded, end, err := lexLiteralString(content, start)
-		if err != nil {
-			return pythonValue{}, 0, err
-		}
-		return pythonValue{kind: pythonValueString, str: decoded}, end, nil
-	case '[':
-		items, end, err := lexPythonArray(content, start)
-		if err != nil {
-			return pythonValue{}, 0, err
-		}
-		return pythonValue{kind: pythonValueArray, items: items}, end, nil
-	case '{':
-		end, err := lexPythonInlineTable(content, start)
-		if err != nil {
-			return pythonValue{}, 0, err
-		}
-		if strings.ContainsAny(content[start:end], "\n\r") {
-			return pythonValue{}, 0, fmt.Errorf("%w: newlines are not allowed inside an inline table", ErrInvalidPythonSurface)
-		}
-		return pythonValue{kind: pythonValueInlineTable}, end, nil
-	default:
-		i := start
-		for i < len(content) && !isPythonValueDelimiter(content[i]) {
-			i++
-		}
-		if i == start {
-			return pythonValue{}, 0, fmt.Errorf("%w: expected a value", ErrInvalidPythonSurface)
-		}
-		return pythonValue{kind: pythonValueAtom}, i, nil
-	}
-}
-
-func isPythonValueDelimiter(c byte) bool {
-	switch c {
-	case ' ', '\t', '\n', '\r', ',', ']', '}', '#':
-		return true
-	}
-	return false
-}
-
-func lexPythonArray(content string, start int) ([]pythonArrayItem, int, error) {
-	i := start + 1
-	items := []pythonArrayItem{}
-	for {
-		i = skipPythonBlank(content, i)
-		if i >= len(content) {
-			return nil, 0, fmt.Errorf("%w: unterminated array", ErrInvalidPythonSurface)
-		}
-		if content[i] == ']' {
-			return items, i + 1, nil
-		}
-		value, next, err := parsePythonValue(content, i)
-		if err != nil {
-			return nil, 0, err
-		}
-		if value.kind == pythonValueString {
-			items = append(items, pythonArrayItem{isString: true, decoded: value.str})
-		} else {
-			items = append(items, pythonArrayItem{})
-		}
-		i = skipPythonBlank(content, next)
-		if i >= len(content) {
-			return nil, 0, fmt.Errorf("%w: unterminated array", ErrInvalidPythonSurface)
-		}
-		switch content[i] {
-		case ',':
-			i++
-		case ']':
-			return items, i + 1, nil
-		default:
-			return nil, 0, fmt.Errorf("%w: expected ',' or ']' in an array", ErrInvalidPythonSurface)
-		}
-	}
-}
-
-func lexPythonInlineTable(content string, start int) (int, error) {
-	i := start + 1
-	for {
-		i = skipPythonSpaces(content, i)
-		if i >= len(content) || content[i] == '\n' || content[i] == '\r' {
-			return 0, fmt.Errorf("%w: unterminated or multi-line inline table", ErrInvalidPythonSurface)
-		}
-		if content[i] == '}' {
-			return i + 1, nil
-		}
-		_, next, err := parsePythonKeySegment(content, i)
-		if err != nil {
-			return 0, err
-		}
-		i = skipPythonSpaces(content, next)
-		if i >= len(content) || content[i] != '=' {
-			return 0, fmt.Errorf("%w: expected '=' in an inline table", ErrInvalidPythonSurface)
-		}
-		i = skipPythonSpaces(content, i+1)
-		_, valueEnd, err := parsePythonValue(content, i)
-		if err != nil {
-			return 0, err
-		}
-		i = skipPythonSpaces(content, valueEnd)
-		if i >= len(content) || content[i] == '\n' || content[i] == '\r' {
-			return 0, fmt.Errorf("%w: unterminated or multi-line inline table", ErrInvalidPythonSurface)
-		}
-		switch content[i] {
-		case ',':
-			i++
-		case '}':
-			return i + 1, nil
-		default:
-			return 0, fmt.Errorf("%w: expected ',' or '}' in an inline table", ErrInvalidPythonSurface)
-		}
-	}
-}
-
-func lexBasicString(content string, start int) (string, int, error) {
-	var builder strings.Builder
-	i := start + 1
-	for {
-		if i >= len(content) {
-			return "", 0, fmt.Errorf("%w: unterminated string", ErrInvalidPythonSurface)
-		}
-		c := content[i]
-		switch {
-		case c == '"':
-			return builder.String(), i + 1, nil
-		case c == '\\':
-			decoded, next, err := lexPythonEscape(content, i)
-			if err != nil {
-				return "", 0, err
-			}
-			builder.WriteString(decoded)
-			i = next
-		case c < 0x20 && c != '\t':
-			return "", 0, fmt.Errorf("%w: control character inside a string", ErrInvalidPythonSurface)
-		default:
-			builder.WriteByte(c)
-			i++
-		}
-	}
-}
-
-func lexMultilineBasicString(content string, start int) (string, int, error) {
-	var builder strings.Builder
-	i := start + 3
-	if i < len(content) && content[i] == '\r' && i+1 < len(content) && content[i+1] == '\n' {
-		i += 2
-	} else if i < len(content) && content[i] == '\n' {
-		i++
-	}
-	for {
-		if i >= len(content) {
-			return "", 0, fmt.Errorf("%w: unterminated multi-line string", ErrInvalidPythonSurface)
-		}
-		switch {
-		case strings.HasPrefix(content[i:], `"""`):
-			return builder.String(), i + 3, nil
-		case content[i] == '\\':
-			j := i + 1
-			k := j
-			sawNewline := false
-			for k < len(content) && (content[k] == ' ' || content[k] == '\t' || content[k] == '\n' || content[k] == '\r') {
-				if content[k] == '\n' || content[k] == '\r' {
-					sawNewline = true
-				}
-				k++
-			}
-			if k > j && sawNewline {
-				if k >= len(content) {
-					return "", 0, fmt.Errorf("%w: unterminated multi-line string", ErrInvalidPythonSurface)
-				}
-				i = k
-				continue
-			}
-			decoded, next, err := lexPythonEscape(content, i)
-			if err != nil {
-				return "", 0, err
-			}
-			builder.WriteString(decoded)
-			i = next
-		default:
-			builder.WriteByte(content[i])
-			i++
-		}
-	}
-}
-
-func lexLiteralString(content string, start int) (string, int, error) {
-	i := start + 1
-	for {
-		if i >= len(content) {
-			return "", 0, fmt.Errorf("%w: unterminated string", ErrInvalidPythonSurface)
-		}
-		c := content[i]
-		if c == '\'' {
-			return content[start+1 : i], i + 1, nil
-		}
-		if c == '\n' || c == '\r' || c < 0x20 && c != '\t' {
-			return "", 0, fmt.Errorf("%w: invalid character inside a literal string", ErrInvalidPythonSurface)
-		}
-		i++
-	}
-}
-
-func lexMultilineLiteralString(content string, start int) (string, int, error) {
-	i := start + 3
-	if i < len(content) && content[i] == '\r' && i+1 < len(content) && content[i+1] == '\n' {
-		i += 2
-	} else if i < len(content) && content[i] == '\n' {
-		i++
-	}
-	begin := i
-	for {
-		if i >= len(content) {
-			return "", 0, fmt.Errorf("%w: unterminated multi-line literal string", ErrInvalidPythonSurface)
-		}
-		if strings.HasPrefix(content[i:], `'''`) {
-			return content[begin:i], i + 3, nil
-		}
-		i++
-	}
-}
-
-func lexPythonEscape(content string, backslash int) (string, int, error) {
-	if backslash+1 >= len(content) {
-		return "", 0, fmt.Errorf("%w: unterminated escape sequence", ErrInvalidPythonSurface)
-	}
-	switch content[backslash+1] {
-	case 'b':
-		return "\b", backslash + 2, nil
-	case 't':
-		return "\t", backslash + 2, nil
-	case 'n':
-		return "\n", backslash + 2, nil
-	case 'f':
-		return "\f", backslash + 2, nil
-	case 'r':
-		return "\r", backslash + 2, nil
-	case '"':
-		return "\"", backslash + 2, nil
-	case '\\':
-		return "\\", backslash + 2, nil
-	case 'u':
-		return lexPythonUnicodeEscape(content, backslash, 4)
-	case 'U':
-		return lexPythonUnicodeEscape(content, backslash, 8)
-	default:
-		return "", 0, fmt.Errorf("%w: unknown escape sequence", ErrInvalidPythonSurface)
-	}
-}
-
-func lexPythonUnicodeEscape(content string, backslash int, digits int) (string, int, error) {
-	if backslash+2+digits > len(content) {
-		return "", 0, fmt.Errorf("%w: short unicode escape sequence", ErrInvalidPythonSurface)
-	}
-	value := 0
-	for k := 0; k < digits; k++ {
-		c := content[backslash+2+k]
-		var digit int
-		switch {
-		case c >= '0' && c <= '9':
-			digit = int(c - '0')
-		case c >= 'a' && c <= 'f':
-			digit = int(c-'a') + 10
-		case c >= 'A' && c <= 'F':
-			digit = int(c-'A') + 10
-		default:
-			return "", 0, fmt.Errorf("%w: invalid unicode escape sequence", ErrInvalidPythonSurface)
-		}
-		value = value<<4 | digit
-	}
-	if value > 0x10FFFF || value >= 0xD800 && value <= 0xDFFF {
-		return "", 0, fmt.Errorf("%w: invalid unicode escape sequence", ErrInvalidPythonSurface)
-	}
-	return string(rune(value)), backslash + 2 + digits, nil
-}
-
-func skipPythonBlank(content string, i int) int {
-	for i < len(content) {
-		switch content[i] {
-		case ' ', '\t', '\n', '\r':
-			i++
-		case '#':
-			i = skipPythonComment(content, i)
-		default:
-			return i
-		}
-	}
-	return i
-}
-
-func skipPythonSpaces(content string, i int) int {
-	for i < len(content) && (content[i] == ' ' || content[i] == '\t') {
-		i++
-	}
-	return i
-}
-
-func skipPythonComment(content string, i int) int {
-	for i < len(content) && content[i] != '\n' {
-		i++
-	}
-	return i
 }

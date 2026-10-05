@@ -82,9 +82,13 @@ fields the render aligns to the lock projection:
 |----------|----------|----------------|
 | `node-typescript` | `package.json` | `license` → `"SEE LICENSE IN LICENSE"` (or the declared SPDX identifier) |
 | `python` | `pyproject.toml` | `[project]` `license` → `LicenseRef-<LICENSE_ID>` (or the declared SPDX identifier), `license-files` → `["LICENSE"]` |
+| `rust` | `Cargo.toml` | `[package]` `license-file` → `"LICENSE"` (or `[package]` `license` → the declared SPDX identifier) |
 
 Manifest license fields are never hand-edited: the verify lane fails closed
 on diverging fields, and the render is the sanctioned writer. Deprecated
 declaration forms — the PEP 621 `license` table subkeys and the
 `License ::` classifier entries — are reported as findings whose remediation
-is an explicit tenant decision.
+is an explicit tenant decision. The cargo license keys are mutually
+exclusive (`license` in lieu of `license-file`); a manifest that declares
+both keys is a fail-closed finding whose resolution is an explicit tenant
+decision.

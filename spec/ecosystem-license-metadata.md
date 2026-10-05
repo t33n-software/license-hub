@@ -22,7 +22,10 @@ type.
    The implemented row set: `node-typescript` selects the npm surface
    (`package.json`, field `license`); `python` selects the pyproject.toml
    surface (PEP 621/639: field `license` as the SPDX expression string and
-   field `license-files` as the glob list); Go selects no manifest field —
+   field `license-files` as the glob list); `rust` selects the Cargo.toml
+   surface (the mutually exclusive `[package]` keys `license`, an SPDX 2.3
+   expression, and `license-file`, the path to the license text inside the
+   package); Go selects no manifest field —
    the `LICENSE` file at the module root is the truth surface, and the
    adapter aligns nothing. Additional rows are grown content-driven when a
    consuming surface exists, with the field semantics verified against the
@@ -75,7 +78,32 @@ deprecated license declaration form: the verify lane reports them as a
 finding whose remediation is an explicit tenant decision, and the alignment
 never rewrites the classifiers array.
 
-## 4. Render alignment discipline
+## 4. The Rust alignment contract
+
+The Rust row targets `Cargo.toml`. The cargo license keys of the
+`[package]` table are mutually exclusive: `license` carries an SPDX 2.3
+license expression, and `license-file` carries the path to the license text
+inside the package — each key is declared in lieu of the other. The bound
+organization target form for the file-based custom family is
+`license-file = "LICENSE"` — the canonical license text at the repository
+root; a declared `SPDX_LICENSE_IDENTIFIER` projects itself into the
+`license` expression key. Because the keys are exclusive, a form switch
+replaces the declared key line with the projected assignment, and a
+manifest that declares both keys is refused fail-closed: the surface cannot
+be aligned or proven deterministically, and the resolution is an explicit
+tenant decision.
+
+The adapter's scanner reads the `[package]` table strictly and lexes the
+remaining document structurally through the shared TOML skeleton lexer of
+the package. A structural break anywhere — an unterminated string, a
+malformed or duplicated header, a duplicate key, a value the scanner cannot
+interpret — refuses the whole surface fail-closed. The dotted-key forms
+that would create or shadow the license surface outside the canonical table
+(a dotted key in `[package]` whose first segment names a license-relevant
+key, and any root-level declaration of the package name) are refused for
+the same reason.
+
+## 5. Render alignment discipline
 
 The render is the sanctioned writer of tenant license surfaces, and the same
 governed act aligns the ecosystem license fields. Four disciplines bind
@@ -98,7 +126,7 @@ manifest is absent, and the dry-run plan previews the alignment without
 writing. A non-string license member or an unscannable manifest is refused
 fail-closed instead of being rewritten.
 
-## 5. Verification finding classes
+## 6. Verification finding classes
 
 Verification is fail-closed in both directions and yields exactly three
 finding classes:
@@ -118,16 +146,17 @@ finding classes:
 A diverging field is never adopted from the manifest into the lock; the
 correction direction is always lock → manifest through the render.
 
-## 6. Adapter set and growth rule
+## 7. Adapter set and growth rule
 
-The npm and Python adapters are implemented. Every additional ecosystem
-adapter is born content-driven when a consuming project surface exists, and
-its matrix row records either the canonical field semantics (verified
-against the official ecosystem documentation at specification time) or the
-explicit verdict that the ecosystem carries no manifest field — for those
-rows the file family is the declared truth and the adapter aligns nothing.
+The npm, Python, and Rust adapters are implemented. Every additional
+ecosystem adapter is born content-driven when a consuming project surface
+exists, and its matrix row records either the canonical field semantics
+(verified against the official ecosystem documentation at specification
+time) or the explicit verdict that the ecosystem carries no manifest
+field — for those rows the file family is the declared truth and the
+adapter aligns nothing.
 
-## 7. Do / Don't
+## 8. Do / Don't
 
 **Do:** derive every expected field value from the lock through the matrix
 row; prove declaration, manifest, and field fail-closed in both directions;
