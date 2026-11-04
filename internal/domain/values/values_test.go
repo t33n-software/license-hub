@@ -62,6 +62,42 @@ func TestMissingRequiredComplete(t *testing.T) {
 	}
 }
 
+func TestParseSkipsInboundKey(t *testing.T) {
+	got, err := Parse([]byte(`{"PROJECT_NAME":"x","INBOUND_LICENSES":[{"id":"MIT"}]}`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if _, ok := got["INBOUND_LICENSES"]; ok {
+		t.Fatal("Parse() leaked the inbound key into the substitution map")
+	}
+	if got["PROJECT_NAME"] != "x" {
+		t.Fatalf("Parse() = %v", got)
+	}
+}
+
+func TestInboundRawReturnsArray(t *testing.T) {
+	raw, err := InboundRaw([]byte(`{"PROJECT_NAME":"x","INBOUND_LICENSES":[{"id":"MIT"}]}`))
+	if err != nil {
+		t.Fatalf("InboundRaw() error = %v", err)
+	}
+	if string(raw) != `[{"id":"MIT"}]` {
+		t.Fatalf("InboundRaw() = %q", raw)
+	}
+}
+
+func TestInboundRawAbsent(t *testing.T) {
+	raw, err := InboundRaw([]byte(`{"PROJECT_NAME":"x"}`))
+	if err != nil || raw != nil {
+		t.Fatalf("InboundRaw() = %q, %v", raw, err)
+	}
+}
+
+func TestInboundRawInvalidJSON(t *testing.T) {
+	if _, err := InboundRaw([]byte(`{`)); err == nil {
+		t.Fatal("InboundRaw() expected error for invalid JSON")
+	}
+}
+
 func FuzzParse(f *testing.F) {
 	f.Add(`{"PROJECT_NAME":"license-hub"}`)
 	f.Add(`{}`)

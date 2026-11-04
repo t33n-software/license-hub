@@ -371,6 +371,10 @@ func failService(renderer cli.Renderer, command string, err error) int {
 		record.Code = contract.ErrValueInvalid
 		record.Field = "ecosystem"
 		record.Remediation = "repair the declared ecosystem surfaces (the governed seam or the declared ecosystem manifests), then rerun; see spec/ecosystem-license-metadata.md"
+	case errors.Is(err, application.ErrInvalidInboundDeclaration):
+		record.Code = contract.ErrValueInvalid
+		record.Field = "values"
+		record.Remediation = "repair the INBOUND_LICENSES declaration (every entry needs id, template, copyright_year, copyright_holder); see docs/infrastructure/tenant-files.md"
 	}
 	renderer.WriteError(record)
 	if record.Code == contract.ErrExecution {

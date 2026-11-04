@@ -776,3 +776,23 @@ func TestVerifyRejectsADivergingNpmField(t *testing.T) {
 		t.Fatalf("verify() output misses the divergence finding:\n%s", output)
 	}
 }
+
+// --- Inbound license declaration ---
+
+func TestRenderInvalidInboundDeclarationIsAUsageError(t *testing.T) {
+	dir := seedRepo(t)
+	invalid := `{"PROJECT_NAME":"license-hub","LICENSE_ID":"license-hub-NoRepublish-1.0",` +
+		`"COPYRIGHT_YEAR":"2026","CANONICAL_SOURCE_URL":"https://github.com/t33n-software/license-hub",` +
+		`"INBOUND_LICENSES":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "values.json"), []byte(invalid), 0o644); err != nil {
+		t.Fatalf("seed values: %v", err)
+	}
+	args := append(renderArgs(dir, filepath.Join(dir, "out")), "--yes")
+	code, _, stderr := runCLI(args...)
+	if code != contract.ExitUsage || !strings.Contains(stderr, "VALUE_INVALID") {
+		t.Fatalf("run(render) = %d, %q", code, stderr)
+	}
+	if !strings.Contains(stderr, "INBOUND_LICENSES") {
+		t.Fatalf("run(render) error record misses the inbound remediation:\n%s", stderr)
+	}
+}
