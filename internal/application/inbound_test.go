@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -47,6 +48,15 @@ const (
 	inboundMITTemplate = "Copyright (c) {{COPYRIGHT_YEAR}} {{COPYRIGHT_HOLDER}}\n"
 )
 
+// The render and verify lanes resolve inbound artifact paths through
+// filepath.Join, so the in-memory seam keys and the expected violation
+// strings must be platform-native as well; a hardcoded slash key silently
+// misses on Windows runners.
+var (
+	inboundMITTextPath = filepath.Join("out", "LICENSES", "MIT.txt")
+	inboundNoticesPath = filepath.Join("out", "THIRD_PARTY_NOTICES.md")
+)
+
 func inboundTestFiles(values string) map[string]string {
 	return map[string]string{
 		"t.hbs":       inboundInstance,
@@ -84,10 +94,10 @@ func TestRenderWritesInboundFiles(t *testing.T) {
 	if len(result.Written) != 4 {
 		t.Fatalf("Render() written = %v", result.Written)
 	}
-	if got := store.files["out/LICENSES/MIT.txt"]; got != "Copyright (c) 2017 Upstream Author\n" {
+	if got := store.files[inboundMITTextPath]; got != "Copyright (c) 2017 Upstream Author\n" {
 		t.Fatalf("inbound text = %q", got)
 	}
-	notices := store.files["out/THIRD_PARTY_NOTICES.md"]
+	notices := store.files[inboundNoticesPath]
 	for _, want := range []string{"## MIT", "Copyright (c) 2017 Upstream Author", "LICENSES/MIT.txt"} {
 		if !strings.Contains(notices, want) {
 			t.Fatalf("notices document misses %q:\n%s", want, notices)
@@ -115,9 +125,9 @@ func TestRenderInboundTemplateUnresolvedAnchorFailsClosed(t *testing.T) {
 
 func TestRenderInboundWriteFailurePropagates(t *testing.T) {
 	store := newInboundMemFS(inboundTestFiles(inboundMITValues))
-	store.failPath = "out/LICENSES/MIT.txt"
+	store.failPath = inboundMITTextPath
 	if _, err := NewLicenseService(store).Render(inboundRenderRequest()); err == nil ||
-		!strings.Contains(err.Error(), "write out/LICENSES/MIT.txt") {
+		!strings.Contains(err.Error(), "write "+inboundMITTextPath) {
 		t.Fatalf("Render() error = %v", err)
 	}
 }
@@ -132,7 +142,7 @@ func TestPlanRenderIncludesInboundPaths(t *testing.T) {
 		t.Fatalf("PlanRender() targets = %v", plan.Targets)
 	}
 	for path := range store.files {
-		if strings.HasPrefix(path, "out/") {
+		if strings.HasPrefix(path, "out") {
 			t.Fatalf("PlanRender() wrote %s", path)
 		}
 	}
@@ -166,13 +176,13 @@ func TestVerifyInboundMissingAndDriftedArtifacts(t *testing.T) {
 	if _, err := service.Render(inboundRenderRequest()); err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
-	delete(store.files, "out/LICENSES/MIT.txt")
-	store.files["out/THIRD_PARTY_NOTICES.md"] = "hand edited\n"
+	delete(store.files, inboundMITTextPath)
+	store.files[inboundNoticesPath] = "hand edited\n"
 	violations, err := service.Verify(inboundVerifyRequest())
 	if err != nil {
 		t.Fatalf("Verify() error = %v", err)
 	}
-	if !strings.Contains(strings.Join(violations, "\n"), "missing inbound license text: out/LICENSES/MIT.txt") {
+	if !strings.Contains(strings.Join(violations, "\n"), "missing inbound license text: "+inboundMITTextPath) {
 		t.Fatalf("Verify() violations = %v", violations)
 	}
 	if !strings.Contains(strings.Join(violations, "\n"), "inbound notices document drifted from the declaration") {
@@ -186,17 +196,17 @@ func TestVerifyInboundDriftedTextAndMissingNotices(t *testing.T) {
 	if _, err := service.Render(inboundRenderRequest()); err != nil {
 		t.Fatalf("Render() error = %v", err)
 	}
-	store.files["out/LICENSES/MIT.txt"] = "Copyright (c) 2017 Someone Else\n"
-	delete(store.files, "out/THIRD_PARTY_NOTICES.md")
+	store.files[inboundMITTextPath] = "Copyright (c) 2017 Someone Else\n"
+	delete(store.files, inboundNoticesPath)
 	violations, err := service.Verify(inboundVerifyRequest())
 	if err != nil {
 		t.Fatalf("Verify() error = %v", err)
 	}
 	joined := strings.Join(violations, "\n")
-	if !strings.Contains(joined, "inbound license text drifted from its canonical template: out/LICENSES/MIT.txt") {
+	if !strings.Contains(joined, "inbound license text drifted from its canonical template: "+inboundMITTextPath) {
 		t.Fatalf("Verify() violations = %v", violations)
 	}
-	if !strings.Contains(joined, "missing inbound notices document: out/THIRD_PARTY_NOTICES.md") {
+	if !strings.Contains(joined, "missing inbound notices document: "+inboundNoticesPath) {
 		t.Fatalf("Verify() violations = %v", violations)
 	}
 }
