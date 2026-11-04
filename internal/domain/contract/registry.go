@@ -42,7 +42,7 @@ var valuesFlag = FlagDomain{
 	Class:      ClassStructuralReference,
 	TypeName:   "string",
 	Summary:    "path to the tenant values JSON",
-	Form:       "path to a JSON object with string values",
+	Form:       "path to a JSON object with string values plus the optional INBOUND_LICENSES array",
 	Resolution: "existence and readability are resolved at runtime",
 	Example:    "license.values.json",
 	Env:        "LICENSE_VALUES",

@@ -43,9 +43,13 @@ license render \
 Renders the pinned template with the organization defaults and the tenant
 values and writes the instance: `LICENSE` plus the REUSE text file
 (`LICENSES/<SPDX_LICENSE_IDENTIFIER>.txt` when the values declare a listed
-identifier, otherwise `LICENSES/LicenseRef-<LICENSE_ID>.txt`). The render
-fails closed when a required value is missing or a placeholder anchor remains
-unresolved. The command prints the written paths and the template digest.
+identifier, otherwise `LICENSES/LicenseRef-<LICENSE_ID>.txt`). When the
+values declare `INBOUND_LICENSES`, the render additionally writes one
+`LICENSES/<id>.txt` per entry (the entry template with only the copyright
+anchors substituted) and the deterministic `THIRD_PARTY_NOTICES.md`. The
+render fails closed when a required value is missing, a placeholder anchor
+remains unresolved, or an inbound declaration is malformed. The command
+prints the written paths and the template digest.
 
 `render` is the mutating command of this tool. It requires the explicit
 confirmation flag `--yes` in non-interactive contexts and asks for
@@ -73,6 +77,10 @@ defaults and proves three properties fail closed:
 2. **Drift freedom** — the committed `LICENSE` and `LICENSES/` instance equal
    the canonical render byte for byte; hand edits are detected.
 3. **Completeness** — no unresolved `{{PLACEHOLDER}}` anchor remains.
+4. **Inbound proof** — every declared inbound license text equals its
+   canonical template render and the committed `THIRD_PARTY_NOTICES.md`
+   equals the canonical form of the declaration; missing or drifted inbound
+   artifacts are violations.
 
 Every violation is reported; the command exits with the governance-rejection
 code when any violation exists.

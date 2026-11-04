@@ -35,11 +35,12 @@ The closed required anchor set is:
 | `PROJECT_NAME`, `LICENSE_ID`, `COPYRIGHT_YEAR`, `CANONICAL_SOURCE_URL` | Tenant `license.values.json` |
 | `COPYRIGHT_HOLDER`, `GOVERNING_LAW`, `VENUE`, `PERMISSION_CONTACT` | Hub `org-defaults.json` |
 
-One optional anchor exists:
+Two optional values exist outside the anchor set:
 
-| Anchor | Source of truth | Effect |
+| Value | Source of truth | Effect |
 |--------|-----------------|--------|
 | `SPDX_LICENSE_IDENTIFIER` | Tenant `license.values.json` | Selects the listed-license output stem (Section 3) |
+| `INBOUND_LICENSES` | Tenant `license.values.json` | Emits the retained inbound license texts and the third-party notices document (Section 3); it is a structured array, never a substitution anchor |
 
 A rendered instance with an unresolved anchor is invalid; the render gate
 rejects it (the placeholder pattern `\{\{[A-Z0-9_]+\}\}` must return zero
@@ -55,6 +56,13 @@ A render produces exactly two files with identical content:
      `LICENSES/<SPDX_LICENSE_IDENTIFIER>.txt`;
    - without it (custom and unlisted instruments):
      `LICENSES/LicenseRef-<LICENSE_ID>.txt`.
+
+When the tenant values declare `INBOUND_LICENSES`, the render emits one
+further file per entry — `LICENSES/<id>.txt`, the entry's canonical template
+with only `COPYRIGHT_YEAR` and `COPYRIGHT_HOLDER` substituted — plus the
+deterministic `THIRD_PARTY_NOTICES.md`. Inbound entries reference canonical
+hub templates by path; they never embed a second license text, and every
+remaining anchor in an inbound template is a fail-closed refusal.
 
 Custom licenses are never on the SPDX License List and must be identified with
 the `LicenseRef-<idstring>` syntax; a modified standard license always

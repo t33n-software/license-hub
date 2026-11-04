@@ -11,6 +11,7 @@ import (
 
 	"github.com/t33n-software/license-hub/internal/domain/digest"
 	"github.com/t33n-software/license-hub/internal/domain/ecosystem"
+	"github.com/t33n-software/license-hub/internal/domain/inbound"
 	"github.com/t33n-software/license-hub/internal/domain/lockfile"
 	"github.com/t33n-software/license-hub/internal/domain/placeholder"
 	"github.com/t33n-software/license-hub/internal/domain/render"
@@ -35,6 +36,12 @@ var ErrUnresolvedPlaceholders = errors.New("unresolved placeholders")
 //
 // Convention: docs/conventions/cli/output/README.md
 var ErrInvalidEcosystemSurface = errors.New("invalid ecosystem license surface")
+
+// ErrInvalidInboundDeclaration marks a malformed or unprovable inbound
+// license declaration; the CLI maps it to the VALUE_INVALID error class.
+//
+// Convention: docs/conventions/cli/output/README.md
+var ErrInvalidInboundDeclaration = errors.New("invalid inbound license declaration")
 
 // FileSystem is the storage port consumed by the license use cases.
 type FileSystem interface {
@@ -76,13 +83,21 @@ type RenderResult struct {
 }
 
 // preparedRender carries the validated inputs of one render: the canonical
-// content, the template bytes, the resolved instance targets, and the
-// prepared ecosystem alignments.
+// content, the template bytes, the resolved instance targets, the prepared
+// inbound license files, and the prepared ecosystem alignments.
 type preparedRender struct {
 	content    string
 	template   []byte
 	targets    []string
+	inbound    []inboundFile
 	alignments []*ecosystemAlignment
+}
+
+// inboundFile is one prepared inbound artifact: its target path below the
+// render output and its canonical content.
+type inboundFile struct {
+	path    string
+	content string
 }
 
 // ecosystemAlignment carries the prepared ecosystem license-field alignment
@@ -196,7 +211,7 @@ func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
 	if err != nil {
 		return preparedRender{}, fmt.Errorf("read template: %w", err)
 	}
-	merged, err := s.mergedValues(req.OrgDefaultsPath, req.ValuesPath)
+	merged, valuesData, err := s.mergedValues(req.OrgDefaultsPath, req.ValuesPath)
 	if err != nil {
 		return preparedRender{}, err
 	}
@@ -216,6 +231,14 @@ func (s *LicenseService) prepare(req RenderRequest) (preparedRender, error) {
 		}
 		prepared.alignments = append(prepared.alignments, alignments...)
 	}
+	inboundEntries, err := s.inboundEntries(valuesData)
+	if err != nil {
+		return preparedRender{}, err
+	}
+	prepared.inbound, err = s.prepareInbound(inboundEntries, req.OutDir)
+	if err != nil {
+		return preparedRender{}, err
+	}
 	return prepared, nil
 }
 
@@ -227,12 +250,19 @@ func (s *LicenseService) Render(req RenderRequest) (RenderResult, error) {
 	if err != nil {
 		return RenderResult{}, err
 	}
+	written := append([]string{}, prepared.targets...)
 	for _, target := range prepared.targets {
 		if err := s.fs.WriteFile(target, []byte(prepared.content)); err != nil {
 			return RenderResult{}, fmt.Errorf("write %s: %w", target, err)
 		}
 	}
-	result := RenderResult{Written: prepared.targets, Digest: digest.SHA256(prepared.template)}
+	for _, file := range prepared.inbound {
+		if err := s.fs.WriteFile(file.path, []byte(file.content)); err != nil {
+			return RenderResult{}, fmt.Errorf("write %s: %w", file.path, err)
+		}
+		written = append(written, file.path)
+	}
+	result := RenderResult{Written: written, Digest: digest.SHA256(prepared.template)}
 	for _, alignment := range prepared.alignments {
 		if err := s.writeAlignment(alignment, &result); err != nil {
 			return RenderResult{}, err
@@ -279,7 +309,8 @@ func (s *LicenseService) PlanRender(req RenderRequest) (PlanResult, error) {
 	if err != nil {
 		return PlanResult{}, err
 	}
-	plan := PlanResult{Targets: prepared.targets, Digest: digest.SHA256(prepared.template)}
+	targets := append(append([]string{}, prepared.targets...), inboundPaths(prepared.inbound)...)
+	plan := PlanResult{Targets: targets, Digest: digest.SHA256(prepared.template)}
 	for _, alignment := range prepared.alignments {
 		planAlignment(alignment, &plan)
 	}
@@ -326,7 +357,11 @@ func (s *LicenseService) Verify(req VerifyRequest) ([]string, error) {
 		}
 		violations = append(violations, lockViolations...)
 	}
-	merged, err := s.mergedValues(req.OrgDefaultsPath, req.ValuesPath)
+	merged, valuesData, err := s.mergedValues(req.OrgDefaultsPath, req.ValuesPath)
+	if err != nil {
+		return nil, err
+	}
+	inboundEntries, err := s.inboundEntries(valuesData)
 	if err != nil {
 		return nil, err
 	}
@@ -351,6 +386,7 @@ func (s *LicenseService) Verify(req VerifyRequest) ([]string, error) {
 		}
 		violations = append(violations, rowViolations...)
 	}
+	violations = append(violations, s.verifyInbound(inboundEntries, req.Dir)...)
 	return violations, nil
 }
 
@@ -925,20 +961,24 @@ func (s *LicenseService) verifyLock(path string, template []byte) ([]string, err
 	return nil, nil
 }
 
-func (s *LicenseService) mergedValues(orgDefaultsPath, valuesPath string) (map[string]string, error) {
+func (s *LicenseService) mergedValues(orgDefaultsPath, valuesPath string) (map[string]string, []byte, error) {
 	orgDefaults, err := s.readValues(orgDefaultsPath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	project, err := s.readValues(valuesPath)
+	data, err := s.fs.ReadFile(valuesPath)
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("read values %s: %w", valuesPath, err)
+	}
+	project, err := values.Parse(data)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read values %s: %w", valuesPath, err)
 	}
 	merged := values.Merge(orgDefaults, project)
 	if missing := values.MissingRequired(merged); len(missing) > 0 {
-		return nil, fmt.Errorf("%w: %s", ErrMissingValues, strings.Join(missing, ", "))
+		return nil, nil, fmt.Errorf("%w: %s", ErrMissingValues, strings.Join(missing, ", "))
 	}
-	return merged, nil
+	return merged, data, nil
 }
 
 func (s *LicenseService) readValues(path string) (map[string]string, error) {
@@ -966,4 +1006,96 @@ func instancePaths(dir string, merged map[string]string) []string {
 		filepath.Join(dir, "LICENSE"),
 		filepath.Join(dir, "LICENSES", stem+".txt"),
 	}
+}
+
+// inboundEntries decodes the INBOUND_LICENSES declaration out of the raw
+// tenant values document. An absent key is no declaration; every malformed
+// shape is an ErrInvalidInboundDeclaration.
+func (s *LicenseService) inboundEntries(valuesData []byte) ([]inbound.Entry, error) {
+	raw, err := values.InboundRaw(valuesData)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidInboundDeclaration, err)
+	}
+	entries, err := inbound.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidInboundDeclaration, err)
+	}
+	return entries, nil
+}
+
+// prepareInbound renders every declared inbound license text and the notices
+// document below outDir. An empty declaration produces no files. The entry
+// template paths resolve relative to the process working directory, exactly
+// like the --template flag.
+func (s *LicenseService) prepareInbound(entries []inbound.Entry, outDir string) ([]inboundFile, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	files := make([]inboundFile, 0, len(entries)+1)
+	for _, entry := range entries {
+		text, err := s.inboundText(entry)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, inboundFile{path: inbound.LicensePath(outDir, entry), content: text})
+	}
+	files = append(files, inboundFile{path: inbound.NoticesPath(outDir), content: inbound.NoticesDocument(entries)})
+	return files, nil
+}
+
+// inboundText reads the canonical template of one entry and substitutes its
+// copyright anchors.
+func (s *LicenseService) inboundText(entry inbound.Entry) (string, error) {
+	template, err := s.fs.ReadFile(entry.Template)
+	if err != nil {
+		return "", fmt.Errorf("%w: read inbound template %s: %v", ErrInvalidInboundDeclaration, entry.Template, err)
+	}
+	text, err := inbound.Text(string(template), entry)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrInvalidInboundDeclaration, err)
+	}
+	return text, nil
+}
+
+// verifyInbound proves every declared inbound artifact fail-closed: each
+// license text equals its canonical template render and the notices document
+// equals the canonical form of the declaration.
+func (s *LicenseService) verifyInbound(entries []inbound.Entry, dir string) []string {
+	if len(entries) == 0 {
+		return nil
+	}
+	violations := []string{}
+	for _, entry := range entries {
+		text, err := s.inboundText(entry)
+		if err != nil {
+			violations = append(violations, err.Error())
+			continue
+		}
+		path := inbound.LicensePath(dir, entry)
+		committed, err := s.fs.ReadFile(path)
+		if err != nil {
+			violations = append(violations, "missing inbound license text: "+path)
+			continue
+		}
+		if string(committed) != text {
+			violations = append(violations, "inbound license text drifted from its canonical template: "+path)
+		}
+	}
+	noticesPath := inbound.NoticesPath(dir)
+	committed, err := s.fs.ReadFile(noticesPath)
+	if err != nil {
+		violations = append(violations, "missing inbound notices document: "+noticesPath)
+	} else if string(committed) != inbound.NoticesDocument(entries) {
+		violations = append(violations, "inbound notices document drifted from the declaration: "+inbound.NoticesFile)
+	}
+	return violations
+}
+
+// inboundPaths lists the target paths of the prepared inbound files.
+func inboundPaths(files []inboundFile) []string {
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		paths = append(paths, file.path)
+	}
+	return paths
 }

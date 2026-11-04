@@ -377,7 +377,21 @@ time) or the explicit verdict that the ecosystem carries no manifest
 field — for those rows the file family is the declared truth and the
 adapter aligns nothing.
 
-## 14. Do / Don't
+## 14. Inbound license declarations
+
+The manifest alignment above carries exactly one license family per tenant.
+A derived project that retains a listed standard license from its upstream
+declares it through the `INBOUND_LICENSES` array of `license.values.json`
+(entry: `id`, `template`, `copyright_year`, `copyright_holder`); the contract
+lives in `docs/infrastructure/tenant-files.md`. The render emits the retained
+`LICENSES/<id>.txt` texts and the deterministic `THIRD_PARTY_NOTICES.md`; the
+verify lane proves them fail-closed. The declaration anchors on the lock
+values, never on a scan of the tree, and the manifest license field keeps its
+single-family projection (`SEE LICENSE IN LICENSE` on npm). The hub cannot
+know which project a tenant forked; it enforces that the retained notices
+exist, never their authorship.
+
+## 15. Do / Don't
 
 **Do:** derive every expected field value from the lock through the matrix
 row; prove declaration, manifest, and field fail-closed in both directions;

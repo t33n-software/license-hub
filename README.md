@@ -25,6 +25,10 @@ project or substantially similar forks is prohibited. See `LICENSE`.
 ## Tenant adoption in four steps
 
 1. Add `license.values.json` and `license.lock.json` to the tenant repository.
+   A derived project additionally declares its inbound licenses in
+   `license.values.json` (`INBOUND_LICENSES`); the render then also emits the
+   retained `LICENSES/<id>.txt` texts and `THIRD_PARTY_NOTICES.md` — see
+   `docs/infrastructure/tenant-files.md`.
 2. Render the instance:
 
    ```bash

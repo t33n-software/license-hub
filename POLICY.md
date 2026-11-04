@@ -45,6 +45,7 @@ The closed anchor set is:
 | `PROJECT_NAME`, `LICENSE_ID`, `COPYRIGHT_YEAR`, `CANONICAL_SOURCE_URL` | Tenant `license.values.json` |
 | `COPYRIGHT_HOLDER`, `GOVERNING_LAW`, `VENUE`, `PERMISSION_CONTACT` | Hub `org-defaults.json` |
 | `SPDX_LICENSE_IDENTIFIER` (optional) | Tenant `license.values.json` |
+| `INBOUND_LICENSES` (optional, structured array) | Tenant `license.values.json` |
 
 A rendered instance with an unresolved anchor is invalid; the render gate
 rejects it (`grep -RE '\{\{[A-Z0-9_]+\}\}'` must return zero matches).
@@ -57,6 +58,14 @@ instruments keep the `LICENSES/LicenseRef-<LICENSE_ID>.txt` form. For license
 texts shared by an `-only`/`-or-later` identifier pair (the GPL, LGPL, AGPL,
 and GFDL families), the template carries the shared text and the tenant
 declares the suffix through this key.
+
+The optional `INBOUND_LICENSES` value is not an anchor: it never substitutes
+into the license text. It declares the listed standard licenses a derived
+project retains — each with its canonical hub template and its upstream
+copyright line — and binds the render and verify lanes to the retained-notice
+files `LICENSES/<id>.txt` and `THIRD_PARTY_NOTICES.md`. Inbound declarations
+list standard licenses only; the hub proves the notice surfaces exist, never
+which upstream project the tenant forked.
 
 ## 5. Ownership
 

@@ -26,6 +26,32 @@ rendered REUSE text file is emitted as `LICENSES/<ID>.txt`. Leave it unset for
 custom and unlisted instruments, which keep the
 `LICENSES/LicenseRef-<LICENSE_ID>.txt` form.
 
+Optional key: `INBOUND_LICENSES` — the structured array of the listed standard
+licenses a derived project carries alongside its own license family. Every
+entry declares the listed SPDX `id`, the canonical hub `template` of that
+license text, and the retained upstream `copyright_year` plus
+`copyright_holder`:
+
+```json
+"INBOUND_LICENSES": [
+  {
+    "id": "MIT",
+    "template": "templates/permissive/mit/MIT-1.0.0.hbs",
+    "copyright_year": "2017",
+    "copyright_holder": "Example Author"
+  }
+]
+```
+
+With the key set, the render additionally emits `LICENSES/<id>.txt` per entry
+(the entry template with only the two copyright anchors substituted) and the
+deterministic `THIRD_PARTY_NOTICES.md`; the verify lane proves every declared
+artifact fail-closed. An absent key is no declaration. Custom
+`LicenseRef-` identifiers, duplicates, empty arrays, and malformed entries are
+refused; inbound declarations list standard licenses only, because the hub
+cannot know which project the consumer forked — it enforces the existence of
+the retained notices, never their authorship.
+
 ## 2. `license.lock.json` — tenant template pin
 
 Lives in the tenant repository root and is never hand-edited; it changes only
