@@ -454,6 +454,13 @@ func scanNuspec(content string) (*nuspecSurface, error) {
 		case xml.EndElement:
 			if len(stack) == 3 && stack[1] == "metadata" && surface.licenseCount == 1 && stack[2] == NuspecLicenseElement && surface.license != nil && surface.license.endTagEnd == 0 {
 				surface.license.endTagEnd = end
+				if surface.license.dataEnd == 0 {
+					// An empty element carries no char data: the data span
+					// closes at the start of the end tag, so the alignment
+					// replaces a zero-length span instead of the document
+					// head.
+					surface.license.dataEnd = start
+				}
 			}
 			stack = stack[:len(stack)-1]
 		}
@@ -530,6 +537,13 @@ func scanMSBuild(content string) (*msBuildSurface, error) {
 		case xml.EndElement:
 			if len(stack) == 3 && stack[1] == "PropertyGroup" && surface.licenseCount == 1 && surface.licenseProperty != nil && stack[2] == surface.licenseProperty.name && surface.licenseProperty.endTagEnd == 0 {
 				surface.licenseProperty.endTagEnd = end
+				if surface.licenseProperty.dataEnd == 0 {
+					// An empty property carries no char data: the data span
+					// closes at the start of the end tag, so the alignment
+					// replaces a zero-length span instead of the document
+					// head.
+					surface.licenseProperty.dataEnd = start
+				}
 			}
 			stack = stack[:len(stack)-1]
 		}

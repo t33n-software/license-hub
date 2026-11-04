@@ -1,0 +1,5 @@
+go test fuzz v1
+string(".Csproj")
+string("<Project><PropertyGroup><PackageLicenseExpression></PackageLicenseExpression></PropertyGroup></Project>")
+string("LISENCE")
+bool(true)

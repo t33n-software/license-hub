@@ -248,6 +248,39 @@ func TestAlignNuGetSurfaceReplacesADivergingMSBuildValue(t *testing.T) {
 	}
 }
 
+func TestAlignNuGetSurfaceReplacesAnEmptyElement(t *testing.T) {
+	cases := []struct {
+		name         string
+		manifestName string
+		content      string
+		form         NuGetLicenseForm
+		want         string
+	}{
+		{"nuspec empty license element", "example.nuspec", "<package>\n    <metadata>\n        <license type=\"expression\"></license>\n    </metadata>\n</package>\n", NuGetLicenseForm{Expression: true, Value: "MIT"},
+			"<package>\n    <metadata>\n        <license type=\"expression\">MIT</license>\n    </metadata>\n</package>\n"},
+		{"msbuild empty property", "example.csproj", "<Project><PropertyGroup><PackageLicenseExpression></PackageLicenseExpression></PropertyGroup></Project>", NuGetLicenseForm{Expression: true, Value: "LISENCE"},
+			"<Project><PropertyGroup><PackageLicenseExpression>LISENCE</PackageLicenseExpression></PropertyGroup></Project>"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			aligned, changed, err := AlignNuGetSurface(testCase.manifestName, testCase.content, testCase.form)
+			if err != nil {
+				t.Fatalf("AlignNuGetSurface() error = %v", err)
+			}
+			if !changed {
+				t.Fatal("AlignNuGetSurface() changed = false, want true")
+			}
+			if aligned != testCase.want {
+				t.Fatalf("AlignNuGetSurface() = %q, want %q", aligned, testCase.want)
+			}
+			again, changedAgain, err := AlignNuGetSurface(testCase.manifestName, aligned, testCase.form)
+			if err != nil || changedAgain || again != aligned {
+				t.Fatalf("AlignNuGetSurface() is not idempotent: %q (%v, %v)", again, changedAgain, err)
+			}
+		})
+	}
+}
+
 func TestAlignNuGetSurfaceIsIdempotentOnAlignedState(t *testing.T) {
 	for _, testCase := range []struct {
 		name         string
